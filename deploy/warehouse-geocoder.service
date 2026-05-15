@@ -1,0 +1,18 @@
+[Unit]
+Description=Warehouse Geocoder Utility
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/warehouse-geocoder-utility
+EnvironmentFile=/etc/warehouse-geocoder.env
+ExecStart=/usr/bin/node --experimental-strip-types src/index.mjs
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
