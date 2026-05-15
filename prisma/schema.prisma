@@ -1,0 +1,255 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["partialIndexes"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Draft {
+  sender_number  String   @id
+  status         String
+  warehouse_data Json
+  image_urls     String[]
+  created_at     DateTime @default(now())
+}
+
+model Enquiry {
+  id           Int       @id @default(autoincrement())
+  name         String
+  phone_number String
+  email        String?
+  source       String
+  createdat    DateTime? @default(now()) @db.Timestamptz(6)
+}
+
+model MessageLog {
+  id            Int      @id @default(autoincrement())
+  received_at   DateTime @default(now())
+  sender_number String
+  message_body  String
+  status        String
+  error_message String?
+  image_url     String?
+}
+
+model VerifiedNumber {
+  id             Int      @id @default(autoincrement())
+  phone_number   String   @unique
+  name           String
+  is_active      Boolean  @default(true)
+  created_at     DateTime @default(now())
+  twenty_user_id String?  @unique(map: "verified_number_twenty_user_id_key")
+  email          String?  @unique(map: "verified_number_email_key")
+}
+
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model Warehouse {
+  warehouseOwnerType          String?
+  warehouseType               String
+  address                     String
+  googleLocation              String?
+  city                        String
+  state                       String
+  postalCode                  String?
+  zone                        String
+  contactPerson               String
+  contactNumber               String
+  totalSpaceSqft              Int[]
+  offeredSpaceSqft            String?
+  numberOfDocks               String?
+  clearHeightFt               String?
+  compliances                 String
+  otherSpecifications         String?
+  ratePerSqft                 String
+  availability                String?
+  uploadedBy                  String
+  isBroker                    String?
+  photos                      String?
+  createdAt                   DateTime?      @default(now())
+  status_updated_at           DateTime?
+  id                          Int            @id @default(autoincrement())
+  visibility                  Boolean?       @default(false)
+  media                       Json?
+  alt_phone_number            String?
+  land_parcel_size            String?
+  builtup_area                String?
+  owner_warmnth               String?
+  distance_from_highway       String?
+  is_builder                  Boolean?
+  owner_of_multiple_sites     String?
+  carpet_area                 String?
+  nearest_transport           String?
+  fire_exits                  String?
+  fire_compliance_cert_type   String?
+  negotiated_rent             String?
+  washroom_count              String?
+  ownerCompanyName            String?
+  ownerAltPoc                 String?
+  gateSizeFt                  String?
+  dockApronLengthFt           String?
+  setbackArea                 String?
+  ccRoads                     String?
+  wallAndSecurityRoom         String?
+  plinthHeightFt              String?
+  dockDimension               String?
+  canopyType                  String?
+  dockPlatformType            String?
+  otherDockingSpecs           String?
+  flooringType                String?
+  floorStrengthPerSqm         String?
+  ventilationType             String?
+  ventilationAirChangesPerDay String?
+  insulationPresent           String?
+  insulationType              String?
+  lightingDetails             String?
+  wogVerified                 Boolean?
+  centreHeight                String?
+  listing_type                String?
+  WarehouseData               WarehouseData?
+
+  @@index([address(ops: raw("gin_trgm_ops"))], map: "idx_warehouse_address_trgm", type: Gin)
+  @@index([clearHeightFt], map: "idx_warehouse_clear_height")
+  @@index([id, city, state, warehouseType, ratePerSqft, address, zone, contactPerson], map: "idx_warehouse_common_fields")
+  @@index([compliances(ops: raw("gin_trgm_ops"))], map: "idx_warehouse_compliances_trgm", type: Gin)
+  @@index([ratePerSqft], map: "idx_warehouse_rate")
+  @@index([totalSpaceSqft], map: "idx_warehouse_space_gin", type: Gin)
+}
+
+model WarehouseData {
+  id                  Int                    @id @default(autoincrement())
+  latitude            Float?
+  longitude           Float?
+  embedding           Unsupported("vector")?
+  warehouseId         Int                    @unique
+  fireNocAvailable    Boolean?
+  fireSafetyMeasures  String?
+  landType            String?
+  approachRoadWidth   String?
+  dimensions          String?
+  parkingDockingSpace String?
+  pollutionZone       String?
+  powerKva            String?
+  vaastuCompliance    String?
+  Warehouse           Warehouse              @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@index([fireNocAvailable], map: "idx_warehouse_fire_noc", where: raw("(\"fireNocAvailable\" = true)"))
+}
+
+model GeocodeAttempt {
+  id            Int       @id @default(autoincrement())
+  warehouseId   Int       @unique
+  attemptCount  Int       @default(0)
+  lastAttemptAt DateTime  @default(now()) @updatedAt
+  lastVia       String?
+  lastError     String?
+  succeededAt   DateTime?
+
+  @@index([lastAttemptAt])
+  @@index([succeededAt])
+}
+
+model CronRunLog {
+  id         BigInt   @id @default(autoincrement())
+  jobName    String
+  ranAt      DateTime @default(now())
+  status     String
+  durationMs Int
+  metadata   Json?
+  notes      String?
+
+  @@index([jobName, ranAt])
+}
+
+model customer_request {
+  id                      BigInt    @id @default(autoincrement())
+  full_name               String
+  phone_number            String?
+  company_name            String?
+  preferred_location      String?
+  additional_requirements String?
+  created_at              DateTime? @default(now()) @db.Timestamptz(6)
+}
+
+model VideoComposition {
+  id                     String   @id @default(uuid()) @db.Uuid
+  composition_components Json
+  created_at             DateTime @default(now())
+  updated_at             DateTime @updatedAt
+}
+
+model Scout {
+  id         Int      @id @default(autoincrement())
+  empid      String   @unique
+  name       String
+  email      String?
+  status     String   @default("ACTIVE")
+  created_at DateTime @default(now())
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model audit_logs {
+  id        String   @id
+  action    String
+  entity    String
+  entityId  String?
+  context   String?
+  metadata  Json?
+  userEmail String
+  userName  String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([action])
+  @@index([createdAt])
+  @@index([entity, entityId])
+  @@index([userEmail])
+}
+
+model googlemapscrapejobs {
+  id                  String    @id
+  keywords            String
+  output_key          String
+  status              String    @default("running")
+  error               String?
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+  payload             Json?
+  queued_at           DateTime? @db.Timestamptz(6)
+  next_dispatch_after DateTime? @db.Timestamptz(6)
+  dispatched_at       DateTime? @db.Timestamptz(6)
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model opportunities {
+  opportunity_id           String    @id
+  data                     Json
+  stage                    String?
+  assignee_email           String?
+  last_activity_at         DateTime  @default(now()) @db.Timestamptz(6)
+  created_at               DateTime  @default(now()) @db.Timestamptz(6)
+  reminder_1h_sent         Boolean   @default(false)
+  reminder_1d_sent         Boolean   @default(false)
+  reminder_3d_sent         Boolean   @default(false)
+  reminder_1h_failed       String?
+  reminder_1d_failed       String?
+  reminder_3d_failed       String?
+  reminder_1h_request_id   BigInt?
+  reminder_1h_attempted_at DateTime? @db.Timestamptz(6)
+  reminder_1h_attempts     Int       @default(0)
+  reminder_1d_request_id   BigInt?
+  reminder_1d_attempted_at DateTime? @db.Timestamptz(6)
+  reminder_1d_attempts     Int       @default(0)
+  reminder_3d_request_id   BigInt?
+  reminder_3d_attempted_at DateTime? @db.Timestamptz(6)
+  reminder_3d_attempts     Int       @default(0)
+  update_count             Int       @default(0)
+
+  @@index([stage, last_activity_at, reminder_1d_attempted_at], map: "idx_opportunities_reminder_1d", where: raw("((reminder_1d_sent = false) AND (reminder_1d_attempts < 3))"))
+  @@index([reminder_1d_request_id], map: "idx_opportunities_reminder_1d_req", where: raw("(reminder_1d_request_id IS NOT NULL)"))
+  @@index([stage, last_activity_at, reminder_1h_attempted_at], map: "idx_opportunities_reminder_1h", where: raw("((reminder_1h_sent = false) AND (reminder_1h_attempts < 3))"))
+  @@index([reminder_1h_request_id], map: "idx_opportunities_reminder_1h_req", where: raw("(reminder_1h_request_id IS NOT NULL)"))
+  @@index([stage, last_activity_at, reminder_3d_attempted_at], map: "idx_opportunities_reminder_3d", where: raw("((reminder_3d_sent = false) AND (reminder_3d_attempts < 3))"))
+  @@index([reminder_3d_request_id], map: "idx_opportunities_reminder_3d_req", where: raw("(reminder_3d_request_id IS NOT NULL)"))
+}
