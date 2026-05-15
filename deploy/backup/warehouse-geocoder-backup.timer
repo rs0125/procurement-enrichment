@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily timer for Supabase DB backup (04:00 IST = 22:30 UTC)
+
+[Timer]
+# India does not observe DST, so the UTC expression is stable year-round.
+OnCalendar=*-*-* 22:30:00 UTC
+Persistent=true
+Unit=warehouse-geocoder-backup.service
+
+[Install]
+WantedBy=timers.target

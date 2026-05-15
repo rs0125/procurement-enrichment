@@ -1,0 +1,13 @@
+[Unit]
+Description=Log failure of warehouse-geocoder-backup to CronRunLog
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/warehouse-geocoder.env
+ExecStart=/usr/local/sbin/warehouse-geocoder-backup-log-failure
+User=root
+ProtectSystem=strict
+ReadWritePaths=/var/backups/warehouse-geocoder
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true

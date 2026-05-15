@@ -8,7 +8,10 @@ export async function findPendingRecent() {
     left join "GeocodeAttempt"  a on a."warehouseId" = w.id
     where w."googleLocation" is not null
       and w."googleLocation" <> ''
-      and w."createdAt" > now() - interval '7 days'
+      and (
+        w."createdAt" > now() - interval '7 days'
+        or w."status_updated_at" > now() - interval '7 days'
+      )
       and (d.latitude is null or d.longitude is null)
       and a."succeededAt" is null
       and (
@@ -16,7 +19,7 @@ export async function findPendingRecent() {
         or (a."attemptCount" < 5
             and a."lastAttemptAt" < now() - interval '24 hours')
       )
-    order by w."createdAt" desc
+    order by greatest(w."createdAt", coalesce(w."status_updated_at", w."createdAt")) desc
   `;
 }
 

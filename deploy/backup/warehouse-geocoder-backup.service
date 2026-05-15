@@ -1,0 +1,20 @@
+[Unit]
+Description=Daily Supabase DB backup to S3
+Documentation=file:///opt/warehouse-geocoder-utility/deploy/DB_BACKUP.md
+Wants=network-online.target
+After=network-online.target
+OnFailure=warehouse-geocoder-backup-failure.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/warehouse-geocoder.env
+ExecStart=/usr/local/sbin/warehouse-geocoder-backup
+User=root
+# pg_dump + upload can run for several minutes on a non-trivial DB.
+TimeoutStartSec=30min
+# Modest hardening — script writes to /var/backups and reads /etc env file.
+ProtectSystem=strict
+ReadWritePaths=/var/backups/warehouse-geocoder
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true

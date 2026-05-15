@@ -1,0 +1,26 @@
+{
+  "Rules": [
+    {
+      "ID": "warehouse-geocoder-backup-retention",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "supabase/warehouse-geocoder/"
+      },
+      "Transitions": [
+        {
+          "Days": 30,
+          "StorageClass": "GLACIER_IR"
+        }
+      ],
+      "Expiration": {
+        "Days": 90
+      },
+      "NoncurrentVersionExpiration": {
+        "NoncurrentDays": 30
+      },
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 7
+      }
+    }
+  ]
+}
