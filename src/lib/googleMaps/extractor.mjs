@@ -1,11 +1,12 @@
 import { BROWSER_HEADERS } from "./session.mjs";
 
-async function resolveViaCid(ftid) {
+async function resolveViaCid(ftid, { signal } = {}) {
   const pbUrl =
     `https://www.google.com/maps/preview/place?authuser=0&hl=en&gl=in` +
     `&pb=!1m17!1s${ftid}!3m12!1m3!1d10000!2d77.5!3d13.0!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!4m2!3d13.0!4d77.5`;
 
   const r = await fetch(pbUrl, {
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000),
     headers: {
       ...BROWSER_HEADERS,
       Accept: "application/json",
@@ -53,12 +54,14 @@ function extractCoordsFromString(str) {
   return null;
 }
 
-export async function extractCoordinatesFromUrl(url) {
+export async function extractCoordinatesFromUrl(url, { signal } = {}) {
+  signal?.throwIfAborted();
   let finalUrl = url;
 
   if (url.includes("goo.gl") || url.includes("share.google")) {
     try {
       const response = await fetch(url, {
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000),
         redirect: "follow",
         headers: BROWSER_HEADERS,
       });
@@ -74,7 +77,7 @@ export async function extractCoordinatesFromUrl(url) {
   const ftidMatch = finalUrl.match(/!1s(0x[0-9a-f]+:0x[0-9a-f]+)/);
   if (ftidMatch) {
     try {
-      const cidCoords = await resolveViaCid(ftidMatch[1]);
+      const cidCoords = await resolveViaCid(ftidMatch[1], { signal });
       if (cidCoords) return { ...cidCoords, via: "cid_lookup" };
     } catch {
       return { lat: null, lng: null, via: "error_cid" };

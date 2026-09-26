@@ -19,8 +19,9 @@ export const BROWSER_HEADERS = {
   "Sec-Ch-Ua-Platform": '"Windows"',
 };
 
-export async function warmUpSession() {
+export async function warmUpSession({ signal } = {}) {
   const r = await fetch("https://www.google.com/maps", {
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000),
     redirect: "follow",
     headers: BROWSER_HEADERS,
   });

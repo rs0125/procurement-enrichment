@@ -1,0 +1,25 @@
+[Unit]
+Description=Warehouse Enricher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+# Existing deployment paths remain compatible with the geocoder and backup jobs.
+WorkingDirectory=/opt/warehouse-geocoder-utility
+EnvironmentFile=/etc/warehouse-geocoder.env
+Environment=ENRICHER_TEMP_DIR=/var/tmp/warehouse-enricher
+Environment=MALLOC_ARENA_MAX=2
+ExecStart=/usr/bin/node --max-old-space-size=256 --experimental-strip-types src/index.mjs
+MemoryHigh=640M
+MemoryMax=768M
+TasksMax=96
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=35
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

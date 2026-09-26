@@ -1,5 +1,5 @@
 [Unit]
-Description=Warehouse Geocoder Utility
+Description=Warehouse Enricher (legacy unit name)
 After=network-online.target
 Wants=network-online.target
 

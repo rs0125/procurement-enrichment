@@ -47,6 +47,7 @@ model VerifiedNumber {
 
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
 model Warehouse {
+  WarehouseProximity WarehouseProximity[]
   warehouseOwnerType          String?
   warehouseType               String
   address                     String
@@ -252,4 +253,103 @@ model opportunities {
   @@index([reminder_1h_request_id], map: "idx_opportunities_reminder_1h_req", where: raw("(reminder_1h_request_id IS NOT NULL)"))
   @@index([stage, last_activity_at, reminder_3d_attempted_at], map: "idx_opportunities_reminder_3d", where: raw("((reminder_3d_sent = false) AND (reminder_3d_attempts < 3))"))
   @@index([reminder_3d_request_id], map: "idx_opportunities_reminder_3d_req", where: raw("(reminder_3d_request_id IS NOT NULL)"))
+}
+
+
+model WarehouseProximity {
+  id          Int    @id @default(autoincrement())
+  warehouseId Int
+  category    String
+  status      String @default("OK")
+
+  /// The winning landmark as it should read on a deck. Null when OSM has no name
+  /// for it — never a placeholder like "Railway Station".
+  landmarkName String?
+  /// Which table and row won, so a wrong answer can be traced to its source.
+  poiSource    String?
+  /// Stringified: osm_poi keys on Int, point_of_interest on uuid.
+  poiId        String?
+  poiLat       Float?
+  poiLng       Float?
+
+  /// Null unless status is OK.
+  roadKm       Float?
+  driveMinutes Int?
+
+  /// Which API and profile produced roadKm, so a number in a deck sent last
+  /// quarter can still be explained.
+  provider   String?
+  profile    String?
+  /// How many shortlisted candidates were routed to pick this winner.
+  candidates Int?
+
+  /// Conclusions drawn while both the road and the straight-line distance were in
+  /// hand. The straight-line figure itself is not stored, so these codes are what
+  /// survives it — e.g. DETOUR_RATIO_HIGH, NEAREST_BY_ROAD_DIFFERS.
+  warnings String[] @default([])
+
+  /// Bounded retry, so a permanently unroutable landmark stops costing money.
+  attempts  Int     @default(1)
+  lastError String?
+
+  computedAt      DateTime  @default(now())
+  /// The warehouse coordinate this was measured FROM. A corrected coordinate
+  /// invalidates the row by construction — no hook, no timestamp comparison, and it
+  /// works even when someone fixes the coordinate with raw SQL. Comparing
+  /// computedAt against Warehouse.status_updated_at cannot do this job: that column
+  /// is @updatedAt, so a rent edit would invalidate every proximity row.
+  computedFromLat Float?
+  computedFromLng Float?
+  /// MAX(importedAt) over the POI category when the shortlist was drawn. A POI
+  /// re-import moves it forward, which makes this row visibly stale WITHOUT
+  /// automatically queueing a recompute — that has to stay an explicit decision,
+  /// because it costs real money across every warehouse at once.
+  poiWatermark    DateTime?
+
+  Warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@unique([warehouseId, category])
+  @@index([category, status])
+  @@index([computedAt])
+  @@map("warehouse_proximity")
+}
+
+
+model OsmIngestTile {
+  id           Int       @id @default(autoincrement())
+  /// "national", or "<sizeDeg>/<south>/<west>". The size is inside the key so a
+  /// region that times out can be split into finer children without a schema
+  /// change — which is how a dense cell recovers instead of staying a hole.
+  tileKey      String
+  category     String
+  south        Float
+  west         Float
+  north        Float
+  east         Float
+  /// pending | ok | empty | failed | skipped.
+  /// 'empty' is deliberately distinct from 'ok': both completed, but only 'empty'
+  /// warrants suspicion.
+  status       String    @default("pending")
+  /// Elements Overpass returned.
+  elementCount Int       @default(0)
+  /// Rows actually written, after filtering. A large gap between this and
+  /// elementCount means a filter is discarding more than intended — which is how
+  /// the substation voltage threshold gets tuned from evidence, not guesswork.
+  storedCount  Int       @default(0)
+  attempts     Int       @default(0)
+  lastError    String?
+  /// Hash of the query definition that produced this record. Editing a category's
+  /// query changes its hash, which marks these rows stale and forces a refetch.
+  /// Without it, a query edit silently leaves part of the table built from the
+  /// superseded definition and nothing ever says so.
+  queryHash    String?
+  durationMs   Int?
+  bytes        Int?
+  fetchedAt    DateTime?
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([tileKey, category])
+  @@index([category, status])
+  @@index([status])
+  @@map("osm_ingest_tile")
 }

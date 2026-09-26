@@ -1,11 +1,14 @@
 {
-  "name": "warehouse-geocoder-utility",
+  "name": "warehouse-enricher",
   "version": "1.0.0",
-  "description": "",
+  "description": "Warehouse enrichment services: geocoding, image variants, labels, website approval and proximity.",
   "main": "src/index.mjs",
   "scripts": {
     "dev": "nodemon --experimental-strip-types src/index.mjs",
-    "start": "node --experimental-strip-types src/index.mjs"
+    "start": "node --experimental-strip-types src/index.mjs",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "enrich": "node --experimental-strip-types scripts/enrich.mjs",
+    "generate": "prisma generate"
   },
   "keywords": [],
   "author": "",
@@ -16,9 +19,16 @@
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "pg": "^8.20.0",
-    "prisma": "^7.5.0"
+    "prisma": "^7.5.0",
+    "@aws-sdk/client-s3": "3.913.0",
+    "sharp": "0.33.5",
+    "axios": "1.20.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
   }
 }
