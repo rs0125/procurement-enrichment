@@ -7,7 +7,8 @@ for the API, CLI, memory limits, verification and later queue cutover.
 The EC2 display name is `warehouse-enricher`. Existing production unit names,
 paths, geocode scheduling and backups are retained until deployment. The GitHub
 repository is [rs0125/procurement-enrichment](https://github.com/rs0125/procurement-enrichment).
-Pushes and pull requests run [CI](docs/CI.md); EC2 deployment is not enabled yet.
+Pushes and pull requests run [CI](docs/CI.md). Successful CI on `main` triggers
+[EC2 deployment](docs/CD.md) through OIDC and Systems Manager.
 
 The existing nightly job resolves Google Maps URLs on `Warehouse` rows into latitude/longitude on
 `WarehouseData`. Runs as a small Node/Express service on EC2, fired daily by
@@ -165,6 +166,7 @@ MVC, repositories on top of Prisma, `lib/` for external-service clients.
 | [docs/geocode-cron-spec.md](./docs/geocode-cron-spec.md) | Original design doc for the geocode cron (still authoritative for the data model and audit logic) |
 | [docs/ENRICHMENT_SERVICES.md](docs/ENRICHMENT_SERVICES.md) | The seven enrichment actions, API/CLI and local tests |
 | [docs/CI.md](docs/CI.md) | GitHub Actions verification and the separate deployment phase |
+| [docs/CD.md](docs/CD.md) | Current EC2 release flow, authentication and rollback |
 | [deploy/AWS_DEPLOYMENT.md](./deploy/AWS_DEPLOYMENT.md) | Live EC2 resources, bootstrap, day-to-day ops |
 | [deploy/DB_BACKUP.md](./deploy/DB_BACKUP.md) | systemd-timed nightly `pg_dump` → S3 |
 | [deploy/README.md](./deploy/README.md) | Older bootstrap notes — `AWS_DEPLOYMENT.md` is the current truth |
@@ -188,9 +190,10 @@ $SSH 'journalctl -u warehouse-geocoder-backup -e'     # last backup run
 $SSH 'sudo systemctl restart warehouse-geocoder'      # restart app
 ```
 
-Pushes to `main` run `.github/workflows/ci.yml`. EC2 deployment is deferred
-until live testing. The previous SSH-pull-restart workflow is archived at
-`deploy/legacy-deploy.yml.example` and does not execute.
+Pushes to `main` run `.github/workflows/ci.yml`, followed by the deployment
+workflow when CI succeeds. See [the current deployment runbook](docs/CD.md).
+The previous SSH-pull-restart workflow remains archived at
+`deploy/legacy-deploy.yml.example`.
 
 ---
 

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Deploy a validated main revision through the installed enrichment release helper.",
+  "parameters": {
+    "Commit": {
+      "type": "String",
+      "description": "Full lowercase Git commit SHA from the successful main CI run.",
+      "allowedPattern": "^[0-9a-f]{40}$",
+      "interpolationType": "ENV_VAR"
+    }
+  },
+  "mainSteps": [
+    {
+      "action": "aws:runShellScript",
+      "name": "deploy",
+      "precondition": { "StringEquals": ["platformType", "Linux"] },
+      "inputs": {
+        "timeoutSeconds": "1200",
+        "runCommand": [
+          "set -eu",
+          "exec /usr/local/sbin/warehouse-enricher-deploy \"$SSM_Commit\""
+        ]
+      }
+    }
+  ]
+}

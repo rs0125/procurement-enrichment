@@ -12,3 +12,6 @@ src/generated/prisma
 # Local warehouse exports and one-off diagnostic scripts
 /output/
 /scripts/_*
+
+__pycache__/
+*.pyc

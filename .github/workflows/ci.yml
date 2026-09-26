@@ -67,3 +67,6 @@ jobs:
 
       - name: Run unit, HTTP, encoder and database tests
         run: npm test
+
+      - name: Verify deployment guards and rollback
+        run: python3 -m unittest discover -s tests -p '*_test.py' -v

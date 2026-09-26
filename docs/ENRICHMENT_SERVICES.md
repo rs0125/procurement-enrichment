@@ -71,18 +71,19 @@ the HTTP status. Paid model calls that time out still consume a stage attempt.
 - HTTP/CLI actions have a 180-second budget. The existing nightly geocode route
   remains separate and unchanged in its scheduling and selection rules.
 
-The proposed `deploy/warehouse-enricher.service` limits the combined HTTP service
-to 768 MiB (640 MiB soft limit). Validate overlap with geocoding and backups
-before production installation. This unit has not been installed on EC2.
+The deployed systemd override limits the combined HTTP service to 768 MiB
+(640 MiB soft limit). The existing `warehouse-geocoder.service` unit name is
+retained; the alternative `deploy/warehouse-enricher.service` is not installed.
 
 ## Existing production compatibility
 
 The EC2 Name tag is `warehouse-enricher`. The running systemd unit is still
-`warehouse-geocoder.service`, with code under `/opt/warehouse-geocoder-utility`
-and secrets in `/etc/warehouse-geocoder.env`. Those paths remain in the archived
-deployment workflow and backup units so renaming the local project does not
-break live jobs. Do not start both service units on the same port. GitHub runs
-[CI only](CI.md); the EC2 deployment workflow is not active.
+`warehouse-geocoder.service`, with application releases under
+`/opt/warehouse-enricher/current`. The original `/opt/warehouse-geocoder-utility`
+installation and `/etc/warehouse-geocoder.env` remain for compatibility and
+backups. Provider settings are in `/etc/warehouse-enricher.env`. Do not start
+both service units on the same port. Successful main CI triggers
+[OIDC/SSM deployment](CD.md).
 
 `POST /cron/geocode-recent`, the DuckDNS hostname, the Supabase 02:57 IST job,
 and the separate 04:00 IST backup timer remain compatible. No new service is

@@ -1,5 +1,9 @@
 # AWS EC2 Deployment
 
+The current release and CI/CD procedure is in [docs/CD.md](../docs/CD.md).
+The original installation and backup paths below are retained for compatibility;
+these bootstrap notes are historical and are not the current application release process.
+
 This document records the live AWS deployment of `warehouse-geocoder-utility`
 and the exact steps used to bring it up. Reproducible from a workstation with
 the AWS CLI configured (`aws sts get-caller-identity` must succeed).

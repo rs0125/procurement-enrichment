@@ -9,7 +9,7 @@ The project is now `warehouse-enricher`. See `docs/ENRICHMENT_SERVICES.md` and
 `src/services/enrichment/index.mjs` for the seven separately callable services.
 There is no queue or producer cutover yet. Existing production unit names and
 paths remain compatible. The repository is `rs0125/procurement-enrichment` on
-GitHub. CI is active; EC2 deployment remains a separate future phase.
+GitHub. Successful main-branch CI triggers OIDC/SSM deployment. See `docs/CD.md`.
 
 ## What this repo does
 
@@ -73,8 +73,9 @@ designated image and proximity fields, as documented in `docs/ENRICHMENT_SERVICE
   Prisma client is `.ts` and is imported directly.
 - **`output/` is local-only**, gitignored. Don't assume it's on EC2.
 - **CI runs on push to `main` and pull requests.** `.github/workflows/ci.yml`
-  uses a disposable PostGIS database. The old deployment workflow is archived
-  at `deploy/legacy-deploy.yml.example`; pushes do not deploy to EC2.
+  uses a disposable PostGIS database. Successful main CI triggers the OIDC/SSM
+  deployment workflow; pull requests do not deploy. The old SSH workflow is
+  archived at `deploy/legacy-deploy.yml.example`.
 
 ## Things that look like duplication but aren't (yet)
 

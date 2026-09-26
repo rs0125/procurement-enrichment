@@ -11,6 +11,8 @@ The job installs dependencies from the lockfile, validates the Prisma schema,
 generates the Prisma client, checks CLI service registration, and runs all
 unit, HTTP, native image encoder and database integration tests. The test
 database URL is supplied explicitly so the database tests run in CI.
+Python tests also check deployment input validation, the nightly-job window,
+rollback, and suppression of private SSM command output.
 
 Only disposable test credentials are configured. No GitHub secrets are needed;
 CI does not contact Supabase, paid providers, R2 or EC2. Tests cover database
@@ -35,13 +37,9 @@ npm run enrich -- list
 npm test
 ```
 
-## Deployment remains separate
+## Deployment after CI
 
-There is currently no active deployment workflow. The former push-to-EC2
-workflow is archived at `deploy/legacy-deploy.yml.example`, outside GitHub's
-workflow directory. It is reference material, not a deployment-ready template.
-
-An EC2 deployment workflow will follow live testing of the enrichment services.
-That work must account for the existing geocoder and backup schedules, install
-the required configuration, and verify health and rollback. Pushing this
-repository does not change the running EC2 service.
+After the manual deployment was verified, `.github/workflows/deploy.yml` was
+enabled for successful same-repository CI runs on `main`. Pull request runs do
+not deploy. CD uses OIDC and a fixed SSM command; see [EC2 deployment](CD.md).
+The former SSH-pull workflow remains archived at `deploy/legacy-deploy.yml.example`.
