@@ -1,9 +1,9 @@
-import { Router } from "express";
-import { requireCronAuth } from "../middlewares/requireCronAuth.mjs";
-import { geocodeRecent } from "../controllers/cron/geocodeRecent.controller.mjs";
+import { Router } from 'express';
+import { sweepController } from '../controllers/cron/sweep.controller.mjs';
 
-const router = Router();
-
-router.post("/geocode-recent", requireCronAuth, geocodeRecent);
-
-export default router;
+export function cronRoutes({ jobs, authorize }) {
+  const router = Router(), controller = sweepController(jobs.geocode);
+  router.post('/geocode-recent', authorize, controller.start);
+  router.get('/geocode-recent', authorize, controller.status);
+  return router;
+}

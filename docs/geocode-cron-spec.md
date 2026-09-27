@@ -1,3 +1,5 @@
+> Current deployment: the nightly route now uses bounded shared actions and immediate 202 acknowledgement. See [HTTP API](HTTP_API.md) for the current contract. The design history below predates that hardening.
+
 # Geocoding Cron Endpoint — Spec
 
 A daily-fired HTTP endpoint that geocodes recently-added warehouses whose `googleLocation` URL has not yet been resolved to lat/lng. Triggered by Supabase's `pg_cron` + `pg_net` at **03:00 IST**. Maintains an audit trail so permanently-failing warehouses are not retried forever.

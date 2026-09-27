@@ -11,6 +11,7 @@ import { createWebpSweep } from '../src/services/cron/webpSweep.mjs';
 import { sweepProximity } from '../src/services/cron/proximitySweep.mjs';
 import { createExecutor } from '../src/lib/runtime/executor.mjs';
 import { createStorage } from '../src/lib/images/storage.mjs';
+import { cronRoutes } from '../src/routes/cron.routes.mjs';
 import { sweepRoutes } from '../src/routes/sweeps.routes.mjs';
 import { ENRICHMENT_ENDPOINT, planCronHandoff } from '../src/lib/runtime/cronHandoff.mjs';
 
@@ -170,6 +171,7 @@ test('cron HTTP authentication, dry runs and the existing CMS WebP token contrac
   const old = process.env.R2_SECRET_ACCESS_KEY; process.env.R2_SECRET_ACCESS_KEY = 'test-storage-key';
   const app = express(); app.use(express.json()); app.use(sweepRoutes({ jobs: { enrichment: job, webp: job },
     authorize: (req, res, next) => req.get('authorization') === 'Bearer test-cron' ? next() : res.sendStatus(401) }));
+  app.use('/cron', cronRoutes({ jobs: { geocode: job }, authorize: (req,res,next) => req.get('authorization') === 'Bearer test-cron' ? next() : res.sendStatus(401) }));
   const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
@@ -182,6 +184,12 @@ test('cron HTTP authentication, dry runs and the existing CMS WebP token contrac
     const token = createHmac('sha256', 'test-storage-key').update('wareongo:warehouse-webp-trigger:v1').digest('hex');
     const response = await fetch(base + '/maintenance/webp', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
     assert.equal(response.status, 202); assert.equal((await response.json()).jobId, '4'); assert.equal(starts, 1);
+    assert.equal((await fetch(base + '/cron/geocode-recent', {method:'POST'})).status,401);
+    const preview=await fetch(base + '/cron/geocode-recent', {method:'POST',headers,body:'{"dryRun":true}'});
+    assert.equal(preview.status,200);assert.equal((await preview.json()).status,'DRY_RUN');
+    const geocode=await fetch(base + '/cron/geocode-recent', {method:'POST',headers,body:'{}'});
+    assert.equal(geocode.status,202);assert.equal((await geocode.json()).jobId,'4');
+    assert.equal((await fetch(base + '/cron/geocode-recent',{headers})).status,200);
   } finally {
     await new Promise(resolve => server.close(resolve));
     if (old === undefined) delete process.env.R2_SECRET_ACCESS_KEY; else process.env.R2_SECRET_ACCESS_KEY = old;

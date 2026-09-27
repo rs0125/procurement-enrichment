@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../config/prisma.mjs";
-import cronRoutes from "./cron.routes.mjs";
+import { cronRoutes } from "./cron.routes.mjs";
 import { requireCronAuth } from '../middlewares/requireCronAuth.mjs';
 import { createEnrichmentServices } from '../services/enrichment/index.mjs';
 import { enrichmentRoutes } from './enrichment.routes.mjs';
@@ -15,7 +15,7 @@ const router = Router();
 
 router.get('/health', healthController(prisma));
 
-router.use("/cron", cronRoutes);
+router.use("/cron", cronRoutes({ jobs: cronJobs, authorize: requireCronAuth }));
 router.use(sweepRoutes({ jobs: cronJobs, authorize: requireCronAuth }));
 router.use('/enrichment', enrichmentRoutes({ services: enrichments, authorize: requireCronAuth }));
 

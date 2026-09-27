@@ -5,7 +5,23 @@ export function geocodeRepository(prisma) {
         FROM "Warehouse" w LEFT JOIN "WarehouseData" d ON d."warehouseId"=w.id WHERE w.id=$1`,id);
       return row;
     },
+    async fail(row,result) {
+      return prisma.$transaction(async tx=>{
+        await tx.$executeRawUnsafe("SET LOCAL statement_timeout='5s'");
+        const current=await tx.$queryRawUnsafe(`SELECT id FROM "Warehouse" WHERE id=$1
+          AND "googleLocation" IS NOT DISTINCT FROM $2 FOR UPDATE`,row.id,row.googleLocation);
+        if(!current.length) return false;
+        const [coords]=await tx.$queryRawUnsafe(`SELECT latitude,longitude FROM "WarehouseData" WHERE "warehouseId"=$1 FOR UPDATE`,row.id);
+        if((coords?.latitude ?? null)!==(row.latitude ?? null) || (coords?.longitude ?? null)!==(row.longitude ?? null)) return false;
+        const via=['url_@','url_!3d!4d','url_/search/','url_ll=','url_q=','url_dms','cid_lookup','no_match','error_resolve','error_cid','error_thrown'].includes(result.via)?result.via:'no_match';
+        await tx.geocodeAttempt.upsert({where:{warehouseId:row.id},
+          create:{warehouseId:row.id,attemptCount:1,lastVia:via,lastError:'coordinates_not_found'},
+          update:{attemptCount:{increment:1},lastVia:via,lastError:'coordinates_not_found'}});
+        return true;
+      },{maxWait:3000,timeout:8000});
+    },
     async publish(row,result) {
+      if(!Number.isFinite(result.lat) || !Number.isFinite(result.lng) || Math.abs(result.lat)>90 || Math.abs(result.lng)>180) return false;
       return prisma.$transaction(async tx=>{
         await tx.$executeRawUnsafe("SET LOCAL statement_timeout='5s'");
         const current=await tx.$queryRawUnsafe(`SELECT id FROM "Warehouse" WHERE id=$1

@@ -9,10 +9,13 @@ export function createGeocodeService({repository,extract,warmUp}) {
     if(!row.googleLocation || (row.latitude!=null && row.longitude!=null)) return {status:'SKIPPED',reason:'coordinates_present_or_no_url',warehouseId};
     signal?.throwIfAborted();
     try {await warmUp({signal});} catch {signal?.throwIfAborted();}
-    const result=await extract(row.googleLocation,{signal});
+    let result;
+    try { result=await extract(row.googleLocation,{signal}); }
+    catch { signal?.throwIfAborted(); result={lat:null,lng:null,via:'error_thrown'}; }
     signal?.throwIfAborted();
     if(!Number.isFinite(result.lat) || !Number.isFinite(result.lng) || Math.abs(result.lat)>90 || Math.abs(result.lng)>180) {
-      return {status:'FAILED',reason:'coordinates_not_found',warehouseId};
+      const saved=await repository.fail(row,result);
+      return {status:saved?'FAILED':'STALE',reason:'coordinates_not_found',warehouseId};
     }
     const saved=await repository.publish(row,result);
     return {status:saved?'READY':'STALE',warehouseId};

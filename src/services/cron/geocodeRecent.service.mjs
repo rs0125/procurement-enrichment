@@ -1,141 +1,40 @@
-import { prisma } from "../../config/prisma.mjs";
-import { warmUpSession } from "../../lib/googleMaps/session.mjs";
-import { extractCoordinatesFromUrl } from "../../lib/googleMaps/extractor.mjs";
-import {
-  findPendingRecent,
-  recordSuccess,
-  recordFailure,
-} from "../../models/geocode/attemptRepo.mjs";
-import { upsertCoords } from "../../models/geocode/warehouseDataRepo.mjs";
-import { insertRunLog } from "../../models/cron/runLogRepo.mjs";
+import { setTimeout as delay } from 'node:timers/promises';
+import { invoke } from './imageSweeps.mjs';
 
-const JOB_NAME = "geocode-recent";
-const SCOPE = "recent-7d";
-const DELAY_BETWEEN_REQUESTS_MS = 2000;
-const BATCH_SIZE = 15;
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-export async function runGeocodeRecent() {
-  const startedAt = Date.now();
-
-  let warmedOk = false;
-  try {
-    await warmUpSession();
-    warmedOk = true;
-  } catch (err) {
-    const durationMs = Date.now() - startedAt;
-    const log = await insertRunLog({
-      jobName: JOB_NAME,
-      status: "partial",
-      durationMs,
-      metadata: {
-        scope: SCOPE,
-        candidates: 0,
-        processed: 0,
-        succeeded: 0,
-        failed: 0,
-      },
-      notes: `warmup_failed: ${err?.message ?? String(err)}`,
-    });
-    return {
-      runId: Number(log.id),
-      jobName: JOB_NAME,
-      scope: SCOPE,
-      candidates: 0,
-      processed: 0,
-      succeeded: 0,
-      failed: 0,
-      durationMs,
-    };
+export function createGeocodeRecentSweep({ repository, services, pause = delay, limit = 100 }) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid geocoder batch size');
+  async function selection() {
+    const rows = await repository.pending(limit + 1);
+    return { rows: rows.slice(0, limit), morePending: rows.length > limit };
   }
-
-  const pending = await findPendingRecent();
-  const candidates = pending.length;
-  let processed = 0;
-  let succeeded = 0;
-  let failed = 0;
-  let batchCount = 0;
-
-  for (let i = 0; i < pending.length; i++) {
-    const w = pending[i];
-    batchCount++;
-
-    if (batchCount > BATCH_SIZE) {
-      try {
-        await warmUpSession();
-      } catch {
-        // best-effort re-warm; continue on failure
-      }
-      batchCount = 1;
-    }
-
-    let result;
-    try {
-      result = await extractCoordinatesFromUrl(w.googleLocation);
-    } catch (err) {
-      result = {
-        lat: null,
-        lng: null,
-        via: "error_thrown",
-        error: err?.message ?? String(err),
-      };
-    }
-
-    try {
-      await prisma.$transaction(async (tx) => {
-        if (result.lat != null && result.lng != null) {
-          await upsertCoords(tx, {
-            warehouseId: w.id,
-            lat: result.lat,
-            lng: result.lng,
-          });
-          await recordSuccess(tx, {
-            warehouseId: w.id,
-            via: result.via,
-          });
-        } else {
-          await recordFailure(tx, {
-            warehouseId: w.id,
-            via: result.via,
-            error: result.error ?? null,
-          });
-        }
-      });
-
-      processed++;
-      if (result.lat != null) succeeded++;
-      else failed++;
-    } catch (err) {
-      processed++;
-      failed++;
-      console.error(`[geocode-recent] db write failed for warehouse ${w.id}`, err);
-    }
-
-    if (i < pending.length - 1) {
-      await sleep(DELAY_BETWEEN_REQUESTS_MS);
-    }
-  }
-
-  const durationMs = Date.now() - startedAt;
-  const status = failed === 0 ? "ok" : failed === candidates && candidates > 0 ? "error" : "partial";
-
-  const log = await insertRunLog({
-    jobName: JOB_NAME,
-    status,
-    durationMs,
-    metadata: { scope: SCOPE, candidates, processed, succeeded, failed },
-    notes: warmedOk ? null : "warmup_recovered",
-  });
-
   return {
-    runId: Number(log.id),
-    jobName: JOB_NAME,
-    scope: SCOPE,
-    candidates,
-    processed,
-    succeeded,
-    failed,
-    durationMs,
+    async preview() {
+      const { rows, morePending } = await selection();
+      return { status: 'DRY_RUN', scope: 'recent-7d', candidates: rows.length, limit, morePending };
+    },
+    async work({ signal }) {
+      signal.throwIfAborted();
+      const { rows, morePending } = await selection();
+      const result = { scope: 'recent-7d', candidates: rows.length, processed: 0, succeeded: 0,
+        failed: 0, skipped: 0, deferred: 0, morePending };
+      for (const warehouse of rows) {
+        if (signal.aborted) break;
+        let item;
+        try { item = await invoke(services, 'geocode', { warehouseId: warehouse.id }, signal); }
+        catch { if (signal.aborted) break; result.failed++; result.processed++; break; }
+        if (item.status === 'DEFERRED') break;
+        result.processed++;
+        if (item.status === 'READY') result.succeeded++;
+        else if (item.status === 'FAILED') result.failed++;
+        else result.skipped++;
+        if (result.processed < rows.length) {
+          try { await pause(2000, undefined, { signal }); } catch { break; }
+        }
+      }
+      result.deferred = rows.length - result.processed;
+      result.status = result.failed === result.candidates && result.candidates > 0 ? 'FAILED'
+        : result.failed || result.skipped || result.deferred || morePending ? 'PARTIAL' : 'SUCCESS';
+      return result;
+    }
   };
 }

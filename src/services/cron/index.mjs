@@ -5,6 +5,8 @@ import { createStorage, storageConfigured } from '../../lib/images/storage.mjs';
 import cache from '../../lib/images/imageCacheInvalidation.cjs';
 import { createScheduledJob } from './scheduledJob.mjs';
 import { createEnrichmentSweep } from './enrichmentSweep.mjs';
+import { geocodeCandidates } from '../../models/geocode/attemptRepo.mjs';
+import { createGeocodeRecentSweep } from './geocodeRecent.service.mjs';
 import { createWebpSweep } from './webpSweep.mjs';
 
 export function createCronJobs({ prisma, services }) {
@@ -16,7 +18,9 @@ export function createCronJobs({ prisma, services }) {
   let store;
   const webp = createWebpSweep({ repository, services, getStore: () => store ??= createStorage(),
     configured: storageConfigured, invalidate: cache.invalidateImageCache });
+  const geocode = createGeocodeRecentSweep({ repository: geocodeCandidates(prisma), services });
   const jobs = {
+    geocode: createScheduledJob({ ...geocode, runLog, jobName: 'geocode-recent', budgetMs: 10 * 60000, shutdownSignal: shutdown.signal }),
     enrichment: createScheduledJob({ ...enrichment, runLog, jobName: 'sweep_warehouse_enrichment', budgetMs: 10 * 60000, shutdownSignal: shutdown.signal }),
     webp: createScheduledJob({ ...webp, runLog, jobName: 'sweep_warehouse_webp', budgetMs: 45 * 60000, shutdownSignal: shutdown.signal }),
   };

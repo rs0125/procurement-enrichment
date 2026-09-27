@@ -5,6 +5,7 @@ import datetime
 import fcntl
 import json
 import os
+import pwd
 from pathlib import Path
 import re
 import shlex
@@ -27,6 +28,9 @@ DROPIN = Path('/etc/systemd/system/warehouse-geocoder.service.d/enricher-release
 CANARY = Path('/run/systemd/system/warehouse-enricher-canary.service')
 UNIT = 'warehouse-geocoder.service'
 SERVICES = {'geocode', 'proximity', 'image-label', 'document-kind', 'website-approval', 'webp', 'jpeg'}
+RUNTIME_USER = 'warehouse-enricher'
+BUILD_USER = 'warehouse-enricher-build'
+STATE = '/var/lib/warehouse-enricher'
 PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 
 
@@ -48,12 +52,17 @@ def check_schedule(now=None):
 def run(args, *, cwd=None, app_user=False, timeout=600):
     env = {'PATH': PATH, 'LANG': 'C.UTF-8', 'GIT_TERMINAL_PROMPT': '0'}
     if app_user:
-        args = ['systemd-run', '--scope', '--quiet', '--collect',
+        if cwd is None:
+            raise DeploymentError('Build commands require an isolated working directory')
+        args = ['systemd-run', '--wait', '--pipe', '--quiet', '--collect', '--service-type=exec',
+                f'--property=User={BUILD_USER}', f'--property=Group={BUILD_USER}',
+                '--property=NoNewPrivileges=true', '--property=CapabilityBoundingSet=',
+                '--property=ProtectSystem=strict', '--property=ProtectHome=true', '--property=PrivateTmp=true',
+                f'--property=WorkingDirectory={cwd}', f'--property=ReadWritePaths={cwd} /var/cache/warehouse-enricher',
                 '--property=MemoryHigh=512M', '--property=MemoryMax=640M',
                 '--property=TasksMax=128', '--property=CPUQuota=100%',
                 f'--property=RuntimeMaxSec={int(timeout)}',
-                'runuser', '-u', 'ubuntu', '--', 'env', '-i',
-                f'PATH={PATH}', 'LANG=C.UTF-8', 'CI=true',
+                '/usr/bin/env', '-i', f'PATH={PATH}', 'LANG=C.UTF-8', 'CI=true',
                 'GIT_TERMINAL_PROMPT=0', 'npm_config_cache=/var/cache/warehouse-enricher',
                 'NODE_OPTIONS=--max-old-space-size=384',
                 'DATABASE_URL=postgresql://unused:unused@127.0.0.1:9/unused', *args]
@@ -72,6 +81,51 @@ def run(args, *, cwd=None, app_user=False, timeout=600):
             handle.write(output)
         raise DeploymentError('Deployment command failed; details are in the private host log')
     return output.strip()
+
+
+def ensure_accounts():
+    for name in [RUNTIME_USER, BUILD_USER]:
+        try:
+            account = pwd.getpwnam(name)
+        except KeyError:
+            run(['useradd', '--system', '--user-group', '--no-create-home', '--home-dir', '/nonexistent',
+                 '--shell', '/usr/sbin/nologin', name])
+            account = pwd.getpwnam(name)
+        if account.pw_uid == 0 or account.pw_shell != '/usr/sbin/nologin' or set(os.getgrouplist(name, account.pw_gid)) != {account.pw_gid}:
+            raise DeploymentError('Service account has unexpected privileges')
+
+
+def runtime_protection():
+    return f'''User={RUNTIME_USER}
+Group={RUNTIME_USER}
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+StateDirectory=warehouse-enricher
+StateDirectoryMode=0750
+Environment=ENRICHER_TEMP_DIR={STATE}/buffers
+'''
+
+
+def verify_runtime(unit):
+    properties = dict(line.split('=', 1) for line in run(['systemctl', 'show', unit,
+        '--property=User', '--property=NoNewPrivileges', '--property=CapabilityBoundingSet',
+        '--property=ProtectSystem', '--property=ProtectHome']).splitlines())
+    if properties != {'User': RUNTIME_USER, 'NoNewPrivileges': 'yes', 'CapabilityBoundingSet': '',
+                      'ProtectSystem': 'strict', 'ProtectHome': 'yes'}:
+        raise DeploymentError('Runtime privilege isolation did not become active')
 
 
 def replace_text(path, text):
@@ -146,11 +200,11 @@ def prepare(revision):
     if shutil.disk_usage(BASE).free < 2 * 1024**3:
         raise DeploymentError('Less than 2 GiB of free disk space')
     build = Path(tempfile.mkdtemp(prefix='.build-', dir=BASE))
-    shutil.chown(build, user='ubuntu', group='ubuntu')
+    shutil.chown(build, user=BUILD_USER, group=BUILD_USER)
     source = build / 'source'
     try:
         print('Fetching the requested main revision', flush=True)
-        run(['git', 'clone', '--depth=1', '--branch=main', REPOSITORY, str(source)], app_user=True)
+        run(['git', 'clone', '--depth=1', '--branch=main', REPOSITORY, str(source)], cwd=build, app_user=True)
         if run(['git', 'rev-parse', 'HEAD'], cwd=source, app_user=True) != revision:
             raise DeploymentError('main changed during fetch; no deployment performed')
         print('Installing dependencies and generating Prisma on ARM', flush=True)
@@ -178,11 +232,9 @@ def canary(release):
 Description=Warehouse enrichment deployment canary
 [Service]
 Type=simple
-User=ubuntu
-WorkingDirectory={release}
+{runtime_protection()}WorkingDirectory={release}
 EnvironmentFile=/etc/warehouse-geocoder.env
 EnvironmentFile=-/etc/warehouse-enricher.env
-Environment=ENRICHER_TEMP_DIR=/var/tmp/warehouse-enricher
 Environment=MALLOC_ARENA_MAX=2
 ExecStart=/usr/bin/env PORT=3001 /usr/bin/node --max-old-space-size=256 --experimental-strip-types src/index.mjs
 MemoryHigh=320M
@@ -194,6 +246,7 @@ TimeoutStopSec=35
         run(['systemctl', 'daemon-reload'])
         run(['systemctl', 'start', CANARY.name])
         verify(3001)
+        verify_runtime(CANARY.name)
     finally:
         run(['systemctl', 'stop', CANARY.name], timeout=45)
         CANARY.unlink(missing_ok=True)
@@ -206,10 +259,9 @@ def promote(release):
     check_schedule()
     try:
         point(CURRENT, release)
-        replace_text(DROPIN, '''[Service]
-WorkingDirectory=/opt/warehouse-enricher/current
+        replace_text(DROPIN, f'''[Service]
+{runtime_protection()}WorkingDirectory=/opt/warehouse-enricher/current
 EnvironmentFile=-/etc/warehouse-enricher.env
-Environment=ENRICHER_TEMP_DIR=/var/tmp/warehouse-enricher
 Environment=MALLOC_ARENA_MAX=2
 ExecStart=
 ExecStart=/usr/bin/node --max-old-space-size=256 --experimental-strip-types src/index.mjs
@@ -221,6 +273,7 @@ TimeoutStopSec=35
         run(['systemctl', 'daemon-reload'])
         run(['systemctl', 'restart', UNIT], timeout=60)
         verify(3000)
+        verify_runtime(UNIT)
         pid = run(['systemctl', 'show', UNIT, '--property=MainPID', '--value'])
         if Path(f'/proc/{pid}/cwd').resolve() != release:
             raise DeploymentError('The running process does not use the requested release')
@@ -247,12 +300,14 @@ def deploy(revision):
         raise DeploymentError('A full lowercase Git commit SHA is required')
     check_schedule()
     RELEASES.mkdir(parents=True, exist_ok=True)
-    for directory in ['/var/cache/warehouse-enricher', '/var/tmp/warehouse-enricher']:
-        Path(directory).mkdir(mode=0o750, exist_ok=True)
-        shutil.chown(directory, user='ubuntu', group='ubuntu')
+    ensure_accounts()
+    cache = Path('/var/cache/warehouse-enricher')
+    cache.mkdir(mode=0o750, exist_ok=True)
+    run(['chown', '-R', f'{BUILD_USER}:{BUILD_USER}', str(cache)])
     release = prepare(revision)
     if CURRENT.exists() and CURRENT.resolve() == release:
         verify(3000)
+        verify_runtime(UNIT)
         print(json.dumps({'status': 'already_current', 'revision': revision, 'service': UNIT}), flush=True)
         return
     print('Checking the new release on localhost:3001', flush=True)

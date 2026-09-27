@@ -5,6 +5,8 @@ import pg from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.ts';
 import { ImageRepository } from '../src/models/images/repository.mjs';
+import { geocodeCandidates } from '../src/models/geocode/attemptRepo.mjs';
+import { createGeocodeService } from '../src/services/enrichment/geocode.mjs';
 import { geocodeRepository } from '../src/models/geocode/singleRepository.mjs';
 import ProximityRepository from '../src/models/proximity/repository.mjs';
 import jpeg from '../src/lib/images/jpegPolicy.cjs';
@@ -26,7 +28,7 @@ test('database claims and publications preserve shared production contracts',{sk
       CREATE EXTENSION IF NOT EXISTS postgis;
       CREATE TYPE "ImageClass" AS ENUM ('INDOOR','OUTDOOR','DOCUMENT','UNKNOWN');
       CREATE TYPE "DocumentKind" AS ENUM ('LAYOUT','PAPERWORK','OTHER_DOCUMENT','NOT_A_DOCUMENT');
-      CREATE TABLE "Warehouse" (id int PRIMARY KEY,media jsonb,photos text,"photosWebp" text,visibility boolean DEFAULT true,"googleLocation" text);
+      CREATE TABLE "Warehouse" (id int PRIMARY KEY,media jsonb,photos text,"photosWebp" text,visibility boolean DEFAULT true,"googleLocation" text,"createdAt" timestamp DEFAULT now(),"status_updated_at" timestamp);
       CREATE TABLE "WarehouseData" (id serial PRIMARY KEY,"warehouseId" int UNIQUE REFERENCES "Warehouse"(id),latitude double precision,longitude double precision,
         geog geography(Point,4326) GENERATED ALWAYS AS (CASE WHEN latitude IS NOT NULL AND longitude IS NOT NULL THEN ST_SetSRID(ST_MakePoint(longitude,latitude),4326)::geography END) STORED);
       CREATE TABLE "GeocodeAttempt" (id serial PRIMARY KEY,"warehouseId" int UNIQUE,"attemptCount" int DEFAULT 0,"lastAttemptAt" timestamp DEFAULT now(),"lastVia" text,"lastError" text,"succeededAt" timestamp);
@@ -110,6 +112,41 @@ test('database claims and publications preserve shared production contracts',{sk
       await pool.query('INSERT INTO "WarehouseData" ("warehouseId",latitude,longitude) VALUES (3,10,76)');
       assert.equal(await repo.publish(row,{lat:12,lng:77,via:'test'}),false);
       assert.equal((await repo.get(3)).latitude,10);
+    });
+    await t.test('failed geocodes preserve retry cooldowns and reject stale failures',async()=>{
+      const repo=geocodeRepository(prisma),pending=geocodeCandidates(prisma);
+      await pool.query(`INSERT INTO "Warehouse" (id,"googleLocation") VALUES (200,'https://www.google.com/maps/@999.5,777.5,17z')`);
+      const action=createGeocodeService({repository:repo,warmUp:async()=>{},extract:async()=>({lat:999.5,lng:777.5,via:'url_@'})});
+      assert.ok((await pending.pending()).some(row=>row.id===200));
+      assert.equal((await action({warehouseId:200})).status,'FAILED');
+      assert.equal((await repo.get(200)).latitude,null);
+      const attempt=(await pool.query('SELECT * FROM "GeocodeAttempt" WHERE "warehouseId"=200')).rows[0];
+      assert.equal(attempt.attemptCount,1);assert.equal(attempt.succeededAt,null);
+      assert.ok(!(await pending.pending()).some(row=>row.id===200));
+      await pool.query(`UPDATE "GeocodeAttempt" SET "lastAttemptAt"=now()-interval '25 hours' WHERE "warehouseId"=200`);
+      assert.ok((await pending.pending()).some(row=>row.id===200));
+      await pool.query(`UPDATE "GeocodeAttempt" SET "attemptCount"=5 WHERE "warehouseId"=200`);
+      assert.ok(!(await pending.pending()).some(row=>row.id===200));
+      const stale=await repo.get(200);
+      await pool.query(`UPDATE "Warehouse" SET "googleLocation"='https://www.google.com/maps/@13.5,78.5,17z' WHERE id=200`);
+      assert.equal(await repo.fail(stale,{via:'no_match'}),false);
+      assert.equal(await repo.publish(await repo.get(200),{lat:999,lng:777,via:'url_@'}),false);
+      const current=await repo.get(200);
+      await pool.query('INSERT INTO "WarehouseData" ("warehouseId",latitude,longitude) VALUES (200,13.5,78.5)');
+      assert.equal(await repo.fail(current,{via:'no_match'}),false);
+      assert.equal((await pool.query('SELECT "attemptCount" FROM "GeocodeAttempt" WHERE "warehouseId"=200')).rows[0].attemptCount,5);
+    });
+    await t.test('geocoder selection preserves recent-only eligibility and its hard limit',async()=>{
+      const repo=geocodeCandidates(prisma);
+      await pool.query(`INSERT INTO "Warehouse" (id,"googleLocation","createdAt") VALUES
+        (210,'https://www.google.com/maps/@12.5,77.5',now()-interval '8 days'),
+        (211,'https://www.google.com/maps/@12.5,77.5',now()-interval '8 days'),
+        (212,'',now()),(213,'https://www.google.com/maps/@12.5,77.5',now())`);
+      await pool.query(`UPDATE "Warehouse" SET "status_updated_at"=now() WHERE id=211`);
+      await pool.query(`INSERT INTO "GeocodeAttempt" ("warehouseId","succeededAt") VALUES (213,now())`);
+      const ids=(await repo.pending()).map(row=>row.id);
+      assert.ok(!ids.includes(210));assert.ok(ids.includes(211));assert.ok(!ids.includes(212));assert.ok(!ids.includes(213));
+      assert.equal((await repo.pending(1)).length,1);await assert.rejects(repo.pending(102));
     });
     await t.test('proximity preserves current terminal answers and fences coordinate changes',async()=>{
       const repo=new ProximityRepository(prisma),warehouse={id:2,lat:13,lng:78};

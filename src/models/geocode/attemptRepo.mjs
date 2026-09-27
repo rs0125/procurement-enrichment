@@ -1,59 +1,17 @@
-import { prisma } from "../../config/prisma.mjs";
-
-export async function findPendingRecent() {
-  return prisma.$queryRaw`
-    select w.id, w."googleLocation"
-    from "Warehouse" w
-    left join "WarehouseData"   d on d."warehouseId" = w.id
-    left join "GeocodeAttempt"  a on a."warehouseId" = w.id
-    where w."googleLocation" is not null
-      and w."googleLocation" <> ''
-      and (
-        w."createdAt" > now() - interval '7 days'
-        or w."status_updated_at" > now() - interval '7 days'
-      )
-      and (d.latitude is null or d.longitude is null)
-      and a."succeededAt" is null
-      and (
-        a.id is null
-        or (a."attemptCount" < 5
-            and a."lastAttemptAt" < now() - interval '24 hours')
-      )
-    order by greatest(w."createdAt", coalesce(w."status_updated_at", w."createdAt")) desc
-  `;
-}
-
-export async function recordSuccess(tx, { warehouseId, via }) {
-  return tx.geocodeAttempt.upsert({
-    where: { warehouseId },
-    create: {
-      warehouseId,
-      attemptCount: 1,
-      lastVia: via,
-      succeededAt: new Date(),
-    },
-    update: {
-      attemptCount: { increment: 1 },
-      lastVia: via,
-      lastError: null,
-      succeededAt: new Date(),
-    },
-  });
-}
-
-export async function recordFailure(tx, { warehouseId, via, error }) {
-  return tx.geocodeAttempt.upsert({
-    where: { warehouseId },
-    create: {
-      warehouseId,
-      attemptCount: 1,
-      lastVia: via,
-      lastError: error ?? null,
-    },
-    update: {
-      attemptCount: { increment: 1 },
-      lastVia: via,
-      lastError: error ?? null,
-    },
-  });
+export function geocodeCandidates(prisma) {
+  return {
+    async pending(limit = 101) {
+      if (!Number.isInteger(limit) || limit < 1 || limit > 101) throw new Error('Invalid geocoder batch size');
+      return prisma.$queryRaw`
+        SELECT w.id FROM "Warehouse" w
+        LEFT JOIN "WarehouseData" d ON d."warehouseId"=w.id
+        LEFT JOIN "GeocodeAttempt" a ON a."warehouseId"=w.id
+        WHERE w."googleLocation" IS NOT NULL AND w."googleLocation"<>''
+          AND (w."createdAt">now()-interval '7 days' OR w."status_updated_at">now()-interval '7 days')
+          AND (d.latitude IS NULL OR d.longitude IS NULL) AND a."succeededAt" IS NULL
+          AND (a.id IS NULL OR (a."attemptCount"<5 AND a."lastAttemptAt"<now()-interval '24 hours'))
+        ORDER BY greatest(w."createdAt",coalesce(w."status_updated_at",w."createdAt")) DESC,w.id
+        LIMIT ${limit}`;
+    }
+  };
 }

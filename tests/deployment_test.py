@@ -15,9 +15,11 @@ class DeploymentTests(unittest.TestCase):
         process = Mock(returncode=0)
         process.communicate.return_value = ('ok\n', None)
         with patch.object(deploy.subprocess, 'Popen', return_value=process) as popen:
-            self.assertEqual(deploy.run(['npm', 'ci'], app_user=True, timeout=60), 'ok')
+            self.assertEqual(deploy.run(['npm', 'ci'], cwd=Path('/isolated/build'), app_user=True, timeout=60), 'ok')
         command = popen.call_args.args[0]
-        self.assertEqual(command[:2], ['systemd-run', '--scope'])
+        self.assertEqual(command[:3], ['systemd-run', '--wait', '--pipe'])
+        for flag in ['--property=User=warehouse-enricher-build', '--property=NoNewPrivileges=true', '--property=ProtectSystem=strict', '--property=ProtectHome=true', '--property=CapabilityBoundingSet=']:
+            self.assertIn(flag, command)
         for flag in ['--property=MemoryMax=640M', '--property=TasksMax=128', '--property=RuntimeMaxSec=60']:
             self.assertIn(flag, command)
         self.assertIn('NODE_OPTIONS=--max-old-space-size=384', command)
@@ -40,8 +42,13 @@ class DeploymentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             unit = Path(folder) / 'canary.service'
             contents = []
-            with patch.object(deploy, 'CANARY', unit), patch.object(deploy, 'run', return_value=''), patch.object(deploy, 'verify', side_effect=lambda port: contents.append(unit.read_text())):
+            with patch.object(deploy, 'CANARY', unit), patch.object(deploy, 'run', return_value=''), patch.object(deploy, 'verify', side_effect=lambda port: contents.append(unit.read_text())), patch.object(deploy, 'verify_runtime') as protection:
                 deploy.canary(Path(folder))
+            protection.assert_called_once_with(unit.name)
+            self.assertIn('User=warehouse-enricher\n', contents[0])
+            self.assertIn('NoNewPrivileges=true', contents[0])
+            self.assertIn('ProtectSystem=strict', contents[0])
+            self.assertIn('StateDirectory=warehouse-enricher', contents[0])
             self.assertIn('MemoryMax=384M', contents[0])
             self.assertIn('MemoryHigh=320M', contents[0])
             self.assertFalse(unit.exists())
@@ -84,10 +91,27 @@ class DeploymentTests(unittest.TestCase):
             root = Path(folder)
             release = root / ('f' * 40); release.mkdir()
             current = root / 'current'; current.symlink_to(release)
-            with patch.multiple(deploy, CURRENT=current, RELEASES=root), patch.object(deploy, 'check_schedule'), patch.object(deploy, 'prepare', return_value=release), patch.object(deploy.shutil, 'chown'), patch.object(deploy.Path, 'mkdir'), patch.object(deploy, 'verify') as verify, patch.object(deploy, 'promote') as promote:
+            with patch.multiple(deploy, CURRENT=current, RELEASES=root), patch.object(deploy, 'check_schedule'), patch.object(deploy, 'prepare', return_value=release), patch.object(deploy, 'ensure_accounts'), patch.object(deploy, 'run'), patch.object(deploy, 'verify_runtime'), patch.object(deploy.shutil, 'chown'), patch.object(deploy.Path, 'mkdir'), patch.object(deploy, 'verify') as verify, patch.object(deploy, 'promote') as promote:
                 deploy.deploy('f' * 40)
                 verify.assert_called_once_with(3000)
                 promote.assert_not_called()
+
+    def test_runtime_verification_rejects_privilege_regressions(self):
+        good = 'User=warehouse-enricher\nNoNewPrivileges=yes\nCapabilityBoundingSet=\nProtectSystem=strict\nProtectHome=yes'
+        with patch.object(deploy, 'run', return_value=good):
+            deploy.verify_runtime('test.service')
+        for bad in [good.replace('User=warehouse-enricher', 'User=ubuntu'), good.replace('NoNewPrivileges=yes','NoNewPrivileges=no'), good.replace('CapabilityBoundingSet=', 'CapabilityBoundingSet=cap_setuid')]:
+            with patch.object(deploy, 'run', return_value=bad), self.assertRaises(deploy.DeploymentError):
+                deploy.verify_runtime('test.service')
+
+    def test_service_accounts_cannot_be_privileged_existing_accounts(self):
+        for uid, shell, groups in [(0, '/usr/sbin/nologin', [50]), (500, '/bin/bash', [50]), (500, '/usr/sbin/nologin', [50, 27])]:
+            with patch.object(deploy.pwd, 'getpwnam', return_value=Mock(pw_uid=uid, pw_gid=50, pw_shell=shell)), patch.object(deploy.os, 'getgrouplist', return_value=groups), self.assertRaises(deploy.DeploymentError):
+                deploy.ensure_accounts()
+
+    def test_isolated_build_requires_a_working_directory(self):
+        with self.assertRaises(deploy.DeploymentError):
+            deploy.run(['npm','ci'], app_user=True)
 
 
 if __name__ == '__main__':

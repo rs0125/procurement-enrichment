@@ -5,7 +5,26 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=ubuntu
+User=warehouse-enricher
+Group=warehouse-enricher
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+StateDirectory=warehouse-enricher
+StateDirectoryMode=0750
+Environment=ENRICHER_TEMP_DIR=/var/lib/warehouse-enricher/buffers
 WorkingDirectory=/opt/warehouse-geocoder-utility
 EnvironmentFile=/etc/warehouse-geocoder.env
 ExecStart=/usr/bin/node --experimental-strip-types src/index.mjs

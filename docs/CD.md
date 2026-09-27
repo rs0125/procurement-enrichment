@@ -45,7 +45,7 @@ the window if a deployment was deferred.
 | `/etc/systemd/system/warehouse-geocoder.service.d/enricher-release.conf` | Release directory and resource limits |
 | `/etc/warehouse-geocoder.env` | Existing database, cron and backup configuration; retained unchanged |
 | `/etc/warehouse-enricher.env` | Provider configuration, root-owned mode 0600 |
-| `/var/tmp/warehouse-enricher` | Disk-backed image buffers |
+| `/var/lib/warehouse-enricher/buffers` | Disk-backed image buffers, owned by the runtime account |
 | `/opt/warehouse-geocoder-utility` | Original installation, retained for backup scripts and initial rollback |
 
 The provider file contains only the OpenAI, Mapbox and R2 settings needed by
@@ -54,14 +54,27 @@ application credentials into workflows, repository variables, source archives
 or build logs. Edit provider settings on the host with `sudoedit` and restart
 the application when changing them.
 
-Build commands run as `ubuntu` with a clean environment and a dummy database
-URL. The updated helper places each build command in a systemd scope capped at
-640 MiB, 128 tasks, one CPU and the command's runtime limit. The health-only
-canary has a separate 384 MiB cap. These helper changes require administrative
-installation before they take effect; pushing application code does not replace
-the installed helper. Production environment files are loaded by systemd at runtime. Workflow
-logs show command status and revision only; detailed command errors stay in
-the root-only `/opt/warehouse-enricher/last-command-failure.log` on the host.
+Build commands run as the non-login `warehouse-enricher-build` account in a
+transient systemd service, with a clean environment and a dummy database URL.
+The service disables privilege escalation and capabilities, protects home and
+system directories, and permits persistent writes only to the isolated build
+and npm cache directories. Each command retains the 640 MiB, 128-task, one-CPU
+and runtime limits.
+
+The application and health-only canary run as the separate non-login
+`warehouse-enricher` account. They cannot use sudo, gain privileges, write the
+release/configuration directories or read user homes. Systemd provides their
+writable state directory; temporary files are private. Both units have an empty
+capability set, and deployment verifies the effective isolation before accepting
+a release. The canary retains its 384 MiB cap. The previous image buffer path is
+left untouched so rollback remains possible. Backup services remain root-run
+with their existing configuration and permissions.
+
+Changes to the installed deployment helper require administrative installation
+before pushing a release that depends on them. Application pushes do not replace
+the helper. Production environment files stay root-owned and are loaded by
+systemd at runtime. Workflow logs show status and revision only; detailed command
+errors remain in the root-only host log.
 
 The application has a 768 MiB systemd memory limit, a 640 MiB soft limit, and a
 256 MiB Node heap. Enrichment and WebP crons are described in `CRON_MIGRATION.md`;
