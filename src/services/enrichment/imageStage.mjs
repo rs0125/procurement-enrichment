@@ -29,7 +29,7 @@ export function imageStage(stage, { repository, processImage, invalidate = async
       result = await processImage(row, { signal });
       signal?.throwIfAborted();
     } catch (error) {
-      const deferred = (!started && signal?.aborted) || error.code === 'memory_pressure';
+      const deferred = ((!started || stage === 'webp') && signal?.aborted) || error.code === 'memory_pressure';
       await repository.fail(stage, row, deferred ? '' : 'Image enrichment failed', { deferred, unsupported: Boolean(error.unsupported) });
       return { status: deferred || signal?.aborted ? 'DEFERRED' : error.unsupported ? 'UNSUPPORTED' : 'FAILED', imageId, reason: deferred || signal?.aborted ? 'interrupted' : 'processing_failed' };
     }

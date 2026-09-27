@@ -1,4 +1,4 @@
-import { S3Client, HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, HeadObjectCommand, PutObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 
@@ -13,6 +13,20 @@ export function createStorage(env=process.env,{client}={}) {
     credentials:{accessKeyId:env.R2_ACCESS_KEY_ID.trim(),secretAccessKey:env.R2_SECRET_ACCESS_KEY.trim()},maxAttempts:2});
   return {publicBase:base.origin,bucket,
     url:key=>`${base.origin}/${key.split('/').map(encodeURIComponent).join('/')}`,
+    async existingWebpKeys(signal) {
+      const keys=new Set();
+      let continuation;
+      do {
+        signal.throwIfAborted();
+        const page=await s3.send(new ListObjectsV2Command({Bucket:bucket,Prefix:'webp/',ContinuationToken:continuation}),
+          {abortSignal:AbortSignal.any([signal,AbortSignal.timeout(30000)])});
+        for(const row of page.Contents ?? []) if(row.Key && row.Size>0) keys.add(row.Key);
+        const next=page.IsTruncated ? page.NextContinuationToken : undefined;
+        if(page.IsTruncated && (!next || next===continuation)) throw new Error('incomplete_webp_inventory');
+        continuation=next;
+      } while(continuation);
+      return keys;
+    },
     async head(key,signal) {
       try {
         const value=await s3.send(new HeadObjectCommand({Bucket:bucket,Key:key}),{abortSignal:AbortSignal.any([signal,AbortSignal.timeout(30000)])});

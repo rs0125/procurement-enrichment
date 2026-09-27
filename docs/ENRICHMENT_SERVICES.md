@@ -1,8 +1,8 @@
 # Warehouse enrichment services
 
 This is the service layer for the future queue worker. Each action receives one
-explicit image or warehouse ID. There is no queue, polling loop, new scheduled
-sweep, or automatic chaining between these actions yet.
+explicit image or warehouse ID. [Scheduled batches](CRON_MIGRATION.md) now compose
+these actions using the existing cron triggers. There is no durable queue yet.
 
 | Service | Input | Behaviour |
 |---|---|---|
@@ -86,8 +86,8 @@ both service units on the same port. Successful main CI triggers
 [OIDC/SSM deployment](CD.md).
 
 `POST /cron/geocode-recent`, the DuckDNS hostname, the Supabase 02:57 IST job,
-and the separate 04:00 IST backup timer remain compatible. No new service is
-scheduled and no dashboard/website cron has been cut over in this phase.
+and the separate 04:00 IST backup timer remain compatible. The dashboard and
+website cron handoff is described in [Scheduled enrichment](CRON_MIGRATION.md).
 
 The Prisma additions describe existing shared tables only. There is no database
 migration in this change. Do not run `prisma db push` against Supabase.
@@ -132,6 +132,6 @@ size/origin limits, cancellation, cleanup, authentication, independent services,
 preservation of completed reviews, exclusive image claims, original preservation,
 JPEG publication races and coordinate races. They do not call paid providers or R2.
 
-The next phase is durable queue delivery, retries and producer hooks, followed
-by coordinated retirement of the old sweeps. Website rebuild scheduling is also
-part of that cutover; this layer only provides the existing cache invalidation.
+Queue delivery and producer hooks are deferred until the migrated crons are
+stable through at least two nightly cycles. Website rebuild scheduling stays
+independent; this layer only provides the existing cache invalidation.

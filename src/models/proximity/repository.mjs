@@ -1,4 +1,5 @@
 import { Prisma } from "../../generated/prisma/client.ts";
+import { COORDINATE_EPSILON } from '../../lib/proximity/coordinates.mjs';
 class BaseModel { constructor(prisma) { this.prisma = prisma; } handleDatabaseError(error) { throw error; } }
 const { TARGET_HIGHWAY, categoryFor } = await import('../../lib/proximity/osmCategories.cjs').then(m => m.default);
 
@@ -102,16 +103,16 @@ class WarehouseProximityModel extends BaseModel {
                 SELECT 1 FROM categories c WHERE NOT EXISTS (
                     SELECT 1 FROM warehouse_proximity p
                     WHERE p."warehouseId" = d."warehouseId" AND p.category = c.category
-                      AND p."computedFromLat" IS NOT DISTINCT FROM d.latitude
-                      AND p."computedFromLng" IS NOT DISTINCT FROM d.longitude
+                      AND abs(p."computedFromLat" - d.latitude) <= ${COORDINATE_EPSILON}
+                      AND abs(p."computedFromLng" - d.longitude) <= ${COORDINATE_EPSILON}
                 )
               )
               AND NOT EXISTS (
                 SELECT 1 FROM "CronRunLog" r
                 WHERE r."jobName" = 'warehouse_proximity:' || d."warehouseId"::text
                   AND r.status = 'FAILED' AND r."ranAt" > now() - interval '1 day'
-                  AND (r.metadata->>'lat')::double precision IS NOT DISTINCT FROM d.latitude
-                  AND (r.metadata->>'lng')::double precision IS NOT DISTINCT FROM d.longitude
+                  AND abs((r.metadata->>'lat')::double precision - d.latitude) <= ${COORDINATE_EPSILON}
+                  AND abs((r.metadata->>'lng')::double precision - d.longitude) <= ${COORDINATE_EPSILON}
                   AND (r.metadata->>'retryAt')::timestamptz > now()
               )
             ORDER BY d."warehouseId" DESC LIMIT ${limit}`;
@@ -136,7 +137,8 @@ class WarehouseProximityModel extends BaseModel {
             const current = await tx.$queryRaw`
                 SELECT "warehouseId" FROM "WarehouseData"
                 WHERE "warehouseId" = ${warehouse.id}
-                  AND latitude = ${warehouse.lat} AND longitude = ${warehouse.lng}
+                  AND abs(latitude - ${warehouse.lat}) <= ${COORDINATE_EPSILON}
+                  AND abs(longitude - ${warehouse.lng}) <= ${COORDINATE_EPSILON}
                 FOR UPDATE`;
             if (!current.length) return 0;
             return new WarehouseProximityModel(tx).upsertMany(warehouse.id, rows, { onlyMissingOrStale: true });
@@ -288,8 +290,9 @@ class WarehouseProximityModel extends BaseModel {
                                   AND warehouse_proximity."computedFromLat" IS NOT DISTINCT FROM EXCLUDED."computedFromLat"
                                   AND warehouse_proximity."computedFromLng" IS NOT DISTINCT FROM EXCLUDED."computedFromLng"
                                 THEN warehouse_proximity.attempts + 1 ELSE 1 END
-                ${onlyMissingOrStale ? `WHERE warehouse_proximity."computedFromLat" IS DISTINCT FROM EXCLUDED."computedFromLat"
-                    OR warehouse_proximity."computedFromLng" IS DISTINCT FROM EXCLUDED."computedFromLng"` : ''}`;
+                ${onlyMissingOrStale ? `WHERE warehouse_proximity."computedFromLat" IS NULL OR warehouse_proximity."computedFromLng" IS NULL
+                    OR abs(warehouse_proximity."computedFromLat" - EXCLUDED."computedFromLat") > ${COORDINATE_EPSILON}
+                    OR abs(warehouse_proximity."computedFromLng" - EXCLUDED."computedFromLng") > ${COORDINATE_EPSILON}` : ''}`;
         try {
             return await this.prisma.$executeRawUnsafe(sql, ...params);
         } catch (error) {

@@ -2,10 +2,11 @@
 
 The local service now includes discrete geocoding, proximity, image labeling,
 website approval, WebP and JPEG actions. See [Enrichment services](docs/ENRICHMENT_SERVICES.md)
-for the API, CLI, memory limits, verification and later queue cutover.
+for the API, CLI and memory limits. [Scheduled enrichment](docs/CRON_MIGRATION.md)
+ports the existing crons here before introducing queues.
 
 The EC2 display name is `warehouse-enricher`. Existing production unit names,
-paths, geocode scheduling and backups are retained until deployment. The GitHub
+paths, geocode scheduling and backups are retained. The GitHub
 repository is [rs0125/procurement-enrichment](https://github.com/rs0125/procurement-enrichment).
 Pushes and pull requests run [CI](docs/CI.md). Successful CI on `main` triggers
 [EC2 deployment](docs/CD.md) through OIDC and Systems Manager.
@@ -54,8 +55,8 @@ diagnosing the long tail of warehouses that didn't geocode cleanly.
    systemd timer 22:30 UTC → backup.sh → pg_dump → S3
 ```
 
-- The scheduled HTTP route handles "geocode the recent inflow"; the new explicit-ID
-  enrichment actions are separate and are not scheduled yet.
+- The existing geocoder handles recent inflow. `/cron/enrichment` and `/cron/webp`
+  run bounded batches of the separately callable enrichment actions.
 - The DB backup is **not** triggered over HTTP — it's a systemd timer on the
   same box. The two jobs share the EC2 host and the `CronRunLog` audit table
   but nothing else.

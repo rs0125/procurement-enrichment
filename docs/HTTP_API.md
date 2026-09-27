@@ -1,7 +1,8 @@
 # HTTP API
 
-The existing production service exposes the two routes below. The local
-enrichment additions are documented in [Enrichment services](ENRICHMENT_SERVICES.md). Everything is wired up in
+The original health/geocoder routes are described below. The explicit actions
+are documented in [Enrichment services](ENRICHMENT_SERVICES.md); scheduled
+enrichment and WebP routes are in [Scheduled enrichment](CRON_MIGRATION.md). Everything is wired up in
 [`src/routes/index.mjs`](../src/routes/index.mjs) and
 [`src/routes/cron.routes.mjs`](../src/routes/cron.routes.mjs).
 

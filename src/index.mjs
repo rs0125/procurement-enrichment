@@ -1,7 +1,7 @@
 import { env } from "./config/env.mjs";
 import { disconnect } from "./config/prisma.mjs";
 import { buildApp } from "./app.mjs";
-import { enrichments } from './routes/index.mjs';
+import { enrichments, cronJobs } from './routes/index.mjs';
 
 const app = buildApp();
 
@@ -11,8 +11,9 @@ const server = app.listen(env.PORT, () => {
 
 async function shutdown() {
   enrichments.stop();
+  cronJobs.stop();
   const deadline = setTimeout(() => process.exit(1), 30000).unref();
-  await new Promise(resolve => server.close(resolve));
+  await Promise.all([new Promise(resolve => server.close(resolve)), cronJobs.drain()]);
   await disconnect();
   clearTimeout(deadline);
   process.exit(0);

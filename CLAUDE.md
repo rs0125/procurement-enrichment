@@ -7,13 +7,14 @@ human-facing orientation; this file is a terse pointer index.
 
 The project is now `warehouse-enricher`. See `docs/ENRICHMENT_SERVICES.md` and
 `src/services/enrichment/index.mjs` for the seven separately callable services.
-There is no queue or producer cutover yet. Existing production unit names and
+The cron handoff is documented in `docs/CRON_MIGRATION.md`; there is no durable
+queue or producer cutover yet. Existing production unit names and
 paths remain compatible. The repository is `rs0125/procurement-enrichment` on
 GitHub. Successful main-branch CI triggers OIDC/SSM deployment. See `docs/CD.md`.
 
 ## What this repo does
 
-Two cron jobs share one EC2 box:
+The original jobs on this EC2 box remain in place:
 
 1. **`/cron/geocode-recent`** — Express endpoint, daily 21:27 UTC, triggered by
    Supabase `pg_cron` → `pg_net` → Caddy → Node. Resolves Google Maps URLs on
@@ -22,6 +23,10 @@ Two cron jobs share one EC2 box:
    → S3 bucket `wareongo-db-backups-111206816712-apsouth1`. NOT pg_cron.
 
 Both write audit rows to `CronRunLog` (`jobName` discriminator).
+
+The migrated 15-minute enrichment sweep and nightly WebP sweep also run here.
+See `src/services/cron/index.mjs` and `docs/CRON_MIGRATION.md` for their bounds,
+shared locks, endpoints, handoff procedure and stability gate before queues.
 
 ## Where to look first
 

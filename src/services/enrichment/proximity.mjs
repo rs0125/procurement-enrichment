@@ -1,5 +1,6 @@
 import categoriesModule from '../../lib/proximity/proximityCategories.cjs';
 import { positiveId } from '../../lib/runtime/executor.mjs';
+import { sameCoordinates } from '../../lib/proximity/coordinates.mjs';
 const { CATEGORIES }=categoriesModule;
 
 export function createProximityService({model,computer,expectedRegions}) {
@@ -10,7 +11,7 @@ export function createProximityService({model,computer,expectedRegions}) {
     const [coverage,stored]=await Promise.all([model.bounded('coverage',expectedRegions),model.bounded('rowsFor',warehouseId)]);
     const skippedCategories=coverage.filter(c=>!c.complete).map(c=>c.category);
     const needed=CATEGORIES.filter(c=>!skippedCategories.includes(c.key) && !stored.some(row=>row.category===c.key
-      && row.computedFromLat===warehouse.lat && row.computedFromLng===warehouse.lng));
+      && sameCoordinates(row,warehouse)));
     if(dryRun) return {status:'DRY_RUN',warehouseId,pendingCategories:needed.map(c=>c.key),skippedCategories};
     if(!needed.length) return {status:skippedCategories.length?'DEFERRED':'SKIPPED',reason:skippedCategories.length?'coverage_incomplete':'already_current',warehouseId,skippedCategories};
     if(!process.env.MAPBOX_ACCESS_TOKEN) {const error=new Error('Service configuration missing');error.statusCode=503;throw error;}

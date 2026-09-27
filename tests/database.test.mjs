@@ -9,6 +9,8 @@ import { geocodeRepository } from '../src/models/geocode/singleRepository.mjs';
 import ProximityRepository from '../src/models/proximity/repository.mjs';
 import jpeg from '../src/lib/images/jpegPolicy.cjs';
 import { createEnrichmentServices } from '../src/services/enrichment/index.mjs';
+import { CronRunRepository } from '../src/models/cron/runRepository.mjs';
+import { CronImageRepository } from '../src/models/cron/imageRepository.mjs';
 
 const url=process.env.ENRICHER_TEST_DATABASE_URL;
 test('database claims and publications preserve shared production contracts',{skip:!url},async t=>{
@@ -110,15 +112,71 @@ test('database claims and publications preserve shared production contracts',{sk
       await pool.query('UPDATE "WarehouseData" SET latitude=14 WHERE "warehouseId"=2');
       assert.equal(await repo.upsertCurrent(warehouse,[row]),0);
     });
+    await t.test('rounding noise does not repeatedly select or overwrite current proximity results',async()=>{
+      const repo=new ProximityRepository(prisma);
+      await pool.query('INSERT INTO "WarehouseData" ("warehouseId",latitude,longitude) VALUES (5,13.1562259,77.6915121)');
+      const warehouse={id:5,lat:13.1562259,lng:77.6915121};
+      const row={category:'hospital',status:'NO_ROUTE',landmarkName:null,poiSource:null,poiId:null,poiLat:null,poiLng:null,roadKm:null,driveMinutes:null,provider:'mapbox',profile:'driving',candidates:0,warnings:[],computedFromLat:warehouse.lat,computedFromLng:warehouse.lng,poiWatermark:null};
+      assert.equal(await repo.upsertCurrent({...warehouse,lat:warehouse.lat+2e-15},[row]),1);
+      await pool.query('UPDATE warehouse_proximity SET "computedFromLat"="computedFromLat"+2e-15 WHERE "warehouseId"=5');
+      assert.ok(!(await repo.findPending([{key:'hospital'}],20)).some(row=>row.id===5));
+      assert.equal(await repo.upsertCurrent(warehouse,[{...row,status:'OK',roadKm:9}]),0);
+      assert.equal((await repo.rowsFor(5))[0].status,'NO_ROUTE');
+      await pool.query('UPDATE "WarehouseData" SET latitude=latitude+0.00001 WHERE "warehouseId"=5');
+      assert.ok((await repo.findPending([{key:'hospital'}],20)).some(row=>row.id===5));
+      assert.equal(await repo.upsertCurrent(warehouse,[row]),0);
+    });
+    await t.test('cron locks prevent old/new worker overlap and recover abandoned runs',async()=>{
+      const runLog=new CronRunRepository(prisma);
+      const claims=await Promise.all([runLog.tryStart('sweep_warehouse_enrichment',900000),runLog.tryStart('sweep_warehouse_enrichment',900000)]);
+      assert.equal(claims.filter(Boolean).length,1);
+      await pool.query(`UPDATE "CronRunLog" SET "ranAt"=now()-interval '1 hour' WHERE "jobName"='sweep_warehouse_enrichment'`);
+      const next=await runLog.tryStart('sweep_warehouse_enrichment',900000);
+      assert.ok(next);
+      assert.equal((await pool.query(`SELECT count(*)::int AS n FROM "CronRunLog" WHERE status='INTERRUPTED'`)).rows[0].n,1);
+      await runLog.finish(next.id,'SUCCESS',12,{processed:0});
+      assert.equal((await runLog.recent('sweep_warehouse_enrichment')).status,'SUCCESS');
+    });
+    await t.test('cron selection respects membership, cooldowns, completed reviews and exhausted leases',async()=>{
+      const repo=new CronImageRepository(prisma);
+      const urls=Array.from({length:8},(_,i)=>base+'/cron'+(100+i)+'.jpg');
+      await pool.query('INSERT INTO "Warehouse" (id,media) VALUES (100,$1)',[JSON.stringify({images:urls.slice(0,7)})]);
+      for(let i=0;i<8;i++) await pool.query(`INSERT INTO labeled_warehouse_images (id,"warehouseId","imageUrl","websiteStatus","websiteAttempts") VALUES ($1,100,$2,'PENDING',0)`,[100+i,urls[i]]);
+      await pool.query(`UPDATE labeled_warehouse_images SET "websiteStatus"='READY',"websiteDecision"='BLOCK' WHERE id=101;
+        UPDATE labeled_warehouse_images SET "websiteStatus"='FAILED',"websiteNextAttemptAt"=now()+interval '1 day' WHERE id=102;
+        UPDATE labeled_warehouse_images SET "websiteStatus"='RUNNING',"websiteLeaseUntil"=now()+interval '1 minute' WHERE id=103;
+        UPDATE labeled_warehouse_images SET "websiteStatus"='FAILED',"websiteAttempts"=5 WHERE id=104;
+        UPDATE labeled_warehouse_images SET "websiteStatus"='RUNNING',"websiteLeaseUntil"=now()-interval '1 minute' WHERE id=105;
+        UPDATE labeled_warehouse_images SET "websiteStatus"='RUNNING',"websiteLeaseUntil"=now()-interval '1 minute',"websiteAttempts"=5 WHERE id=106;`);
+      assert.deepEqual((await repo.pending('website',500)).map(row=>row.id).filter(id=>id>=100).sort(),[100,105]);
+      await repo.bounded('expireClaims');
+      assert.equal((await repository.getActive(106)).websiteStatus,'FAILED');
+      assert.equal((await repository.getActive(101)).websiteDecision,'BLOCK');
+      assert.equal((await repository.getActive(100)).websiteAttempts,0);
+    });
+    await t.test('WebP repair cannot reset a concurrent replacement and projection repair never restores removed media',async()=>{
+      const repo=new CronImageRepository(prisma);
+      await pool.query(`UPDATE labeled_warehouse_images SET "webpStatus"='READY',"webpObjectKey"='webp/old',"webpCheckedAt"=now() WHERE id=100`);
+      const saved=(await repo.inventory()).find(row=>row.id===100);
+      await pool.query(`UPDATE labeled_warehouse_images SET "webpObjectKey"='webp/new' WHERE id=100`);
+      assert.equal(await repo.markMissing([saved]),0);
+      assert.equal(await repo.markMissing([{...saved,webpObjectKey:'webp/new'}]),1);
+      await pool.query(`UPDATE "Warehouse" SET media='{"images":[]}',"photosWebp"='["stale"]' WHERE id=4`);
+      const rows=await repo.warehousePage(0);
+      await repo.projectPage(rows);
+      const row=(await pool.query('SELECT media,"photosWebp" FROM "Warehouse" WHERE id=4')).rows[0];
+      assert.deepEqual(row.media,{images:[]});assert.deepEqual(JSON.parse(row.photosWebp),[null]);
+    });
     await t.test('the complete registry supports read-only dry runs without external calls',async()=>{
       const services=createEnrichmentServices({prisma}),originalFetch=globalThis.fetch;
+      const before=(await pool.query('SELECT count(*)::int AS n FROM "CronRunLog"')).rows[0].n;
       globalThis.fetch=()=>assert.fail('dry run called an external service');
       try {
         for(const service of services.list()) {
           const result=await services.run(service.name,{[service.input]:service.input==='imageId'?1:2,dryRun:true});
           assert.equal(result.status,'DRY_RUN',service.name);
         }
-        assert.equal((await pool.query('SELECT count(*)::int AS n FROM "CronRunLog"')).rows[0].n,0);
+        assert.equal((await pool.query('SELECT count(*)::int AS n FROM "CronRunLog"')).rows[0].n,before);
       } finally {globalThis.fetch=originalFetch;services.stop();}
     });
   } finally {await prisma.$disconnect();await pool.end();}
