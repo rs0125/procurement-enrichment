@@ -44,7 +44,7 @@ async function publish(prisma, row, result) {
       "jpegAt"=now(),"jpegVersion"=$11,"jpegStatus"='READY',"jpegError"=NULL FROM current c
       WHERE l.id=c.id RETURNING l.id,
       1 / CASE WHEN md5((to_jsonb(l)-$9::text[])::text)=c.digest THEN 1 ELSE 0 END AS preserved`,
-    row.id, row.imageUrl, row.jpegUrl, row.jpegVersion, row.jpegStatus, row.jpegAt,
+    row.id, row.imageUrl, row.jpegUrl, row.jpegVersion, row.jpegStatus, row.jpegAtExact ?? row.jpegAt,
     row.warehouseIds, result.url, JPEG_FIELDS, result.bytes, result.version, row.classification);
     return rows.length === 1;
 }

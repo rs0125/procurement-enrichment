@@ -48,7 +48,11 @@ def check_schedule(now=None):
 def run(args, *, cwd=None, app_user=False, timeout=600):
     env = {'PATH': PATH, 'LANG': 'C.UTF-8', 'GIT_TERMINAL_PROMPT': '0'}
     if app_user:
-        args = ['runuser', '-u', 'ubuntu', '--', 'env', '-i',
+        args = ['systemd-run', '--scope', '--quiet', '--collect',
+                '--property=MemoryHigh=512M', '--property=MemoryMax=640M',
+                '--property=TasksMax=128', '--property=CPUQuota=100%',
+                f'--property=RuntimeMaxSec={int(timeout)}',
+                'runuser', '-u', 'ubuntu', '--', 'env', '-i',
                 f'PATH={PATH}', 'LANG=C.UTF-8', 'CI=true',
                 'GIT_TERMINAL_PROMPT=0', 'npm_config_cache=/var/cache/warehouse-enricher',
                 'NODE_OPTIONS=--max-old-space-size=384',
@@ -152,9 +156,12 @@ def prepare(revision):
         print('Installing dependencies and generating Prisma on ARM', flush=True)
         run(['npm', 'ci', '--omit=dev', '--no-audit', '--no-fund'], cwd=source, app_user=True)
         run(['npm', 'run', 'generate'], cwd=source, app_user=True)
-        print('Running isolated service, HTTP and native encoder tests', flush=True)
+        print('Running isolated application and native encoder tests', flush=True)
+        tests = [str(path.relative_to(source)) for path in sorted((source / 'tests').glob('*.test.mjs'))]
+        if not tests:
+            raise DeploymentError('No release tests were found')
         run(['node', '--experimental-strip-types', '--test',
-             'tests/services.test.mjs', 'tests/http.test.mjs', 'tests/compression.test.mjs'],
+             *tests],
             cwd=source, app_user=True)
         (source / '.release-ready').write_text(revision + '\n')
         run(['chown', '-R', 'root:root', str(source)])
@@ -178,7 +185,8 @@ EnvironmentFile=-/etc/warehouse-enricher.env
 Environment=ENRICHER_TEMP_DIR=/var/tmp/warehouse-enricher
 Environment=MALLOC_ARENA_MAX=2
 ExecStart=/usr/bin/env PORT=3001 /usr/bin/node --max-old-space-size=256 --experimental-strip-types src/index.mjs
-MemoryMax=768M
+MemoryHigh=320M
+MemoryMax=384M
 TasksMax=96
 TimeoutStopSec=35
 ''')

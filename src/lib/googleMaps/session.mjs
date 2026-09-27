@@ -25,8 +25,10 @@ export async function warmUpSession({ signal } = {}) {
     redirect: "follow",
     headers: BROWSER_HEADERS,
   });
-  const setCookies = (r.headers.getSetCookie?.() || [])
-    .map((c) => c.split(";")[0])
-    .join("; ");
-  BROWSER_HEADERS.Cookie = BASE_COOKIE + " " + setCookies;
+  try {
+    const setCookies = (r.headers.getSetCookie?.() || [])
+      .map((c) => c.split(";")[0])
+      .join("; ");
+    BROWSER_HEADERS.Cookie = BASE_COOKIE + " " + setCookies;
+  } finally { await r.body?.cancel(); }
 }

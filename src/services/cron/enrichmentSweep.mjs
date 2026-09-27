@@ -22,17 +22,24 @@ export function createEnrichmentSweep({ repository, proximity, services, runLog,
     const stages = {};
     async function runStage(name, duration, action, jobName) {
       if (signal.aborted) { stages[name] = { status: 'PARTIAL', reason: 'interrupted' }; return; }
-      const log = jobName ? await runLog.tryStart(jobName, 15 * 60000, { executor: 'warehouse-enricher' }) : null;
-      if (jobName && !log) { stages[name] = { status: 'SKIPPED', reason: 'already_running' }; return; }
+      let log;
       const controller = new AbortController(), started = Date.now();
       const timer = setTimeout(() => controller.abort(), duration);
       timer.unref?.();
       const stageSignal = AbortSignal.any([signal, controller.signal]);
-      try { stages[name] = await action(stageSignal); }
+      try {
+        log = jobName ? await runLog.tryStart(jobName, 15 * 60000, { executor: 'warehouse-enricher' }) : null;
+        if (jobName && !log) { stages[name] = { status: 'SKIPPED', reason: 'already_running' }; return; }
+        stageSignal.throwIfAborted();
+        stages[name] = await action(stageSignal);
+      }
       catch (error) { stages[name] = { status: stageSignal.aborted ? 'PARTIAL' : 'FAILED',
         reason: stageSignal.aborted ? 'interrupted' : error.statusCode === 503 ? 'configuration_missing' : 'stage_failed' }; }
       finally { clearTimeout(timer); }
-      if (log) await runLog.finish(log.id, stages[name].status, Date.now() - started, stages[name]);
+      if (log) {
+        try { await runLog.finish(log.id, stages[name].status, Date.now() - started, stages[name]); }
+        catch { stages[name] = { ...stages[name], status: 'PARTIAL', warning: 'Stage audit completion failed' }; }
+      }
     }
     // The legacy label lock also covers the independently callable subtype action.
     await runStage('images', 230000, async labelSignal => {

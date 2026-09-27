@@ -34,7 +34,8 @@ export async function sweepImages({ repository, services, stage, service, limit,
   }
   result.backlog = await repository.bounded('backlog', stage);
   result.hasMore = (await repository.bounded('pending', stage, 1)).length > 0;
+  const unresolved = ['PENDING','FAILED','RUNNING','UNSUPPORTED'].some(status => result.backlog[status] > 0);
   result.status = result.failed ? result.ready ? 'PARTIAL' : 'FAILED'
-    : result.deferred || result.hasMore || result.stale ? 'PARTIAL' : 'SUCCESS';
+    : result.deferred || result.hasMore || result.stale || result.unsupported || unresolved ? 'PARTIAL' : 'SUCCESS';
   return result;
 }

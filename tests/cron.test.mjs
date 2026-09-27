@@ -107,7 +107,7 @@ test('preview is read-only; scene labels, document kinds and website approvals s
   const calls = [], remaining = new Set(['label','document','website']);
   const repository = { bounded: async (method, stage, limit) => {
     calls.push(method);
-    if (method === 'backlog') return { PENDING: 1 };
+    if (method === 'backlog') return { PENDING: remaining.has(stage) ? 1 : 0 };
     if (method === 'pending') return remaining.delete(stage) ? [{ id: 1 }] : [];
     if (method === 'reconcile') return { registered: 0, retained: 0 };
   } };

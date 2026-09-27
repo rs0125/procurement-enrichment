@@ -6,20 +6,14 @@ import { createEnrichmentServices } from '../services/enrichment/index.mjs';
 import { enrichmentRoutes } from './enrichment.routes.mjs';
 import { createCronJobs } from '../services/cron/index.mjs';
 import { sweepRoutes } from './sweeps.routes.mjs';
+import { healthController } from '../controllers/health.controller.mjs';
 
 export const enrichments = createEnrichmentServices({ prisma });
 export const cronJobs = createCronJobs({ prisma, services: enrichments });
 
 const router = Router();
 
-router.get("/health", async (_req, res) => {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    res.json({ status: "ok", db: "connected" });
-  } catch (err) {
-    res.status(503).json({ status: "error", db: err.message });
-  }
-});
+router.get('/health', healthController(prisma));
 
 router.use("/cron", cronRoutes);
 router.use(sweepRoutes({ jobs: cronJobs, authorize: requireCronAuth }));

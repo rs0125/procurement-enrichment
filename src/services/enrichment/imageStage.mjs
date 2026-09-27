@@ -33,8 +33,8 @@ export function imageStage(stage, { repository, processImage, invalidate = async
       await repository.fail(stage, row, deferred ? '' : 'Image enrichment failed', { deferred, unsupported: Boolean(error.unsupported) });
       return { status: deferred || signal?.aborted ? 'DEFERRED' : error.unsupported ? 'UNSUPPORTED' : 'FAILED', imageId, reason: deferred || signal?.aborted ? 'interrupted' : 'processing_failed' };
     }
-    // A publication failure retains the claim. A later caller can retry after
-    // expiry without charging the provider again through an unfenced write.
+    // A failed publication retains its lease. Retrying after expiry can repeat
+    // the provider call; the token fences publication, not provider billing.
     const saved = await repository.complete(stage, row, result);
     if (saved) {
       await invalidate();

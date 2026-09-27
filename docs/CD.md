@@ -7,7 +7,7 @@ is `warehouse-enricher`; the existing systemd unit remains
 ## Release flow
 
 1. Push to `main`, or manually run the CI workflow on `main`.
-2. CI verifies the lockfile install, Prisma, the 35 JavaScript tests and the
+2. CI verifies the lockfile install, Prisma, all JavaScript tests and the
    deployment tests. A successful same-repository push/manual CI run triggers
    `.github/workflows/deploy.yml`. Pull request runs cannot deploy.
 3. GitHub's `production` environment allows only `main`. OIDC exchanges the
@@ -18,7 +18,8 @@ is `warehouse-enricher`; the existing systemd unit remains
    edit IAM or SSM documents, read application secrets, or read the backup bucket.
 5. The installed, root-owned `/usr/local/sbin/warehouse-enricher-deploy` validates
    the full commit SHA against the current remote `main`, builds a separate
-   release, and runs service, HTTP and native encoder tests on ARM.
+   release, and runs all local application tests on ARM. Database fault tests
+   run against disposable PostGIS in CI; they never use the production database.
 6. A temporary service on port 3001 checks database health, authentication and
    the enrichment catalog. It does not run a geocode sweep or other live actions.
 7. The helper changes `current`, restarts the existing unit and verifies the
@@ -54,12 +55,17 @@ or build logs. Edit provider settings on the host with `sudoedit` and restart
 the application when changing them.
 
 Build commands run as `ubuntu` with a clean environment and a dummy database
-URL. Production environment files are loaded by systemd at runtime. Workflow
+URL. The updated helper places each build command in a systemd scope capped at
+640 MiB, 128 tasks, one CPU and the command's runtime limit. The health-only
+canary has a separate 384 MiB cap. These helper changes require administrative
+installation before they take effect; pushing application code does not replace
+the installed helper. Production environment files are loaded by systemd at runtime. Workflow
 logs show command status and revision only; detailed command errors stay in
 the root-only `/opt/warehouse-enricher/last-command-failure.log` on the host.
 
 The application has a 768 MiB systemd memory limit, a 640 MiB soft limit, and a
-256 MiB Node heap. No new queue, poller or scheduled enrichment action is enabled.
+256 MiB Node heap. Enrichment and WebP crons are described in `CRON_MIGRATION.md`;
+queueing remains deferred until these schedules are stable.
 Geocoding remains at **02:57 IST** and the backup timer remains at **04:00 IST**.
 
 ## Deployment control files

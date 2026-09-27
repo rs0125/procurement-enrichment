@@ -3,7 +3,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 spec = importlib.util.spec_from_file_location('ec2_release', Path(__file__).parents[1] / 'deploy/ec2-release.py')
 deploy = importlib.util.module_from_spec(spec)
@@ -11,6 +11,19 @@ spec.loader.exec_module(deploy)
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_build_commands_have_a_whole_process_memory_and_runtime_cap(self):
+        process = Mock(returncode=0)
+        process.communicate.return_value = ('ok\n', None)
+        with patch.object(deploy.subprocess, 'Popen', return_value=process) as popen:
+            self.assertEqual(deploy.run(['npm', 'ci'], app_user=True, timeout=60), 'ok')
+        command = popen.call_args.args[0]
+        self.assertEqual(command[:2], ['systemd-run', '--scope'])
+        for flag in ['--property=MemoryMax=640M', '--property=TasksMax=128', '--property=RuntimeMaxSec=60']:
+            self.assertIn(flag, command)
+        self.assertIn('NODE_OPTIONS=--max-old-space-size=384', command)
+        self.assertEqual(command[-2:], ['npm', 'ci'])
+        self.assertEqual(set(popen.call_args.kwargs['env']), {'PATH', 'LANG', 'GIT_TERMINAL_PROMPT'})
+
     def test_only_full_commit_ids_are_accepted(self):
         self.assertTrue(deploy.valid_revision('f' * 40))
         for value in ['main', 'f' * 39, 'F' * 40, 'f' * 40 + ';id', '../main']:
@@ -22,6 +35,16 @@ class DeploymentTests(unittest.TestCase):
                 deploy.check_schedule(datetime.datetime(2026, 9, 26, hour, minute, tzinfo=datetime.timezone.utc))
         for hour, minute in [(21, 14), (22, 45), (0, 0)]:
             deploy.check_schedule(datetime.datetime(2026, 9, 26, hour, minute, tzinfo=datetime.timezone.utc))
+
+    def test_canary_does_not_reserve_a_second_production_sized_memory_budget(self):
+        with tempfile.TemporaryDirectory() as folder:
+            unit = Path(folder) / 'canary.service'
+            contents = []
+            with patch.object(deploy, 'CANARY', unit), patch.object(deploy, 'run', return_value=''), patch.object(deploy, 'verify', side_effect=lambda port: contents.append(unit.read_text())):
+                deploy.canary(Path(folder))
+            self.assertIn('MemoryMax=384M', contents[0])
+            self.assertIn('MemoryHigh=320M', contents[0])
+            self.assertFalse(unit.exists())
 
     def test_rollback_waits_for_the_previous_process_to_start(self):
         with patch.object(deploy, 'request', side_effect=[ConnectionRefusedError(), (503, None), (200, {'status': 'ok', 'db': 'connected'})]), patch.object(deploy.time, 'sleep'):

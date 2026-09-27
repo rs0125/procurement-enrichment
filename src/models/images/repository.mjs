@@ -2,7 +2,7 @@ import pipeline from './pipeline.cjs';
 
 export class ImageRepository extends pipeline.ImagePipelineRepository {
   async getActive(id) {
-    const [row] = await this.prisma.$queryRawUnsafe(`SELECT l.*,
+    const [row] = await this.prisma.$queryRawUnsafe(`SELECT l.*, l."jpegAt"::text AS "jpegAtExact",
       ARRAY(SELECT w.id FROM "Warehouse" w
         WHERE l."imageUrl"=ANY(public.wareongo_image_urls(w.media::jsonb,w.photos))) AS "warehouseIds"
       FROM labeled_warehouse_images l WHERE l.id=$1`, id);

@@ -83,6 +83,14 @@ test('database claims and publications preserve shared production contracts',{sk
       assert.equal(await repository.getActive(4),null);
       assert.equal((await repository.claim('website',{imageId:4,limit:1})).length,0);
     });
+    await t.test('JPEG publication preserves timestamp precision and rejects a microsecond concurrent edit',async()=>{
+      await pool.query(`UPDATE labeled_warehouse_images SET "jpegAt"='2026-09-27 12:00:00.123456+00' WHERE id=1`);
+      const row=await repository.getActive(1);
+      assert.equal(await jpeg.publish(prisma,row,{url:base+'/jpeg/repaired.jpg',bytes:1000,version:jpeg.PHOTO_VERSION}),true);
+      const current=await repository.getActive(1);
+      await pool.query(`UPDATE labeled_warehouse_images SET "jpegAt"="jpegAt"+interval '1 microsecond' WHERE id=1`);
+      assert.equal(await jpeg.publish(prisma,current,{url:base+'/jpeg/stale.jpg',bytes:900,version:jpeg.PHOTO_VERSION}),false);
+    });
     await t.test('legacy WebP projection preserves raw media and missing slots',async()=>{
       await pool.query('UPDATE "Warehouse" SET photos=$1 WHERE id=5',[JSON.stringify([base+'/5.jpg',base+'/missing.jpg'])]);
       await pool.query(`UPDATE labeled_warehouse_images SET "webpUrl"=$1,"webpStatus"='READY' WHERE id=5`,[base+'/webp/5.webp']);

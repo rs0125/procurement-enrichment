@@ -1,4 +1,5 @@
 import { BROWSER_HEADERS } from "./session.mjs";
+import { SHORT_HOSTS, resolveShortUrl, boundedText } from './http.mjs';
 
 async function resolveViaCid(ftid, { signal } = {}) {
   const pbUrl =
@@ -14,9 +15,9 @@ async function resolveViaCid(ftid, { signal } = {}) {
     },
   });
 
-  if (r.status !== 200) return null;
+  if (r.status !== 200) { await r.body?.cancel(); return null; }
 
-  const text = await r.text();
+  const text = await boundedText(r);
   const match = text.match(/\[null,null,(-?\d+\.\d{4,}),(-?\d+\.\d{4,})\]/);
   if (match) {
     return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) };
@@ -57,15 +58,12 @@ function extractCoordsFromString(str) {
 export async function extractCoordinatesFromUrl(url, { signal } = {}) {
   signal?.throwIfAborted();
   let finalUrl = url;
+  let hostname;
+  try { hostname = new URL(url).hostname; } catch {}
 
-  if (url.includes("goo.gl") || url.includes("share.google")) {
+  if (SHORT_HOSTS.has(hostname)) {
     try {
-      const response = await fetch(url, {
-        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000),
-        redirect: "follow",
-        headers: BROWSER_HEADERS,
-      });
-      finalUrl = response.url;
+      finalUrl = await resolveShortUrl(url, { signal });
     } catch {
       return { lat: null, lng: null, via: "error_resolve" };
     }
