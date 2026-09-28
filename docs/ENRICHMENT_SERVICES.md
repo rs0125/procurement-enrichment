@@ -1,8 +1,10 @@
 # Warehouse enrichment services
 
-This is the service layer for the future queue worker. Each action receives one
-explicit image or warehouse ID. [Scheduled batches](CRON_MIGRATION.md) now compose
-these actions using the existing cron triggers. There is no durable queue yet.
+See [Architecture and enterprise context](ARCHITECTURE.md) for data ownership,
+integrations and consumer behaviour. This is the service layer for the future
+queue worker. Each action receives one explicit image or warehouse ID.
+[Scheduled batches](CRON_MIGRATION.md) now compose these actions using the
+existing cron triggers. There is no durable queue yet.
 
 | Service | Input | Behaviour |
 |---|---|---|
@@ -63,13 +65,18 @@ the HTTP status. Paid model calls that time out still consume a stage attempt.
   through their existing database claims.
 - Admission checks consider host and cgroup memory. Native encodes run in a
   child with a 64 MiB JS heap, a 256 MiB RSS guard, a 16-megapixel input cap,
-  and a 30-second deadline. Downloads are capped at 20 MiB and streamed to disk.
-- `ENRICHER_TEMP_DIR` defaults to `/var/tmp/warehouse-enricher`. The service
-  rejects RAM-backed buffers and directories with less than 256 MiB free.
-- Source images must come from the configured HTTPS R2 origin. Uploads only
+  and a 30-second deadline. Compression downloads are capped at 20 MiB and
+  streamed to disk. Website assessment uses bounded in-memory source bytes
+  for hashing and metadata inspection.
+- `ENRICHER_TEMP_DIR` defaults to `/var/tmp/warehouse-enricher` locally.
+  Production systemd sets `/var/lib/warehouse-enricher/buffers`, owned by the
+  runtime account. The service rejects RAM-backed compression buffers and
+  directories with less than 256 MiB free.
+- Compression sources must come from the configured HTTPS R2 origin. Uploads only
   create variant keys and use conditional writes; originals are never replaced.
-- HTTP/CLI actions have a 180-second budget. The existing nightly geocode route
-  remains separate and unchanged in its scheduling and selection rules.
+- HTTP/CLI actions have a 180-second budget. The nightly geocode batch uses
+  the same executor with its own count/time limits. Its scheduling and
+  selection rules are described in [HTTP API](HTTP_API.md).
 
 The deployed systemd override limits the combined HTTP service to 768 MiB
 (640 MiB soft limit). The existing `warehouse-geocoder.service` unit name is
@@ -103,8 +110,9 @@ website policy/normalization, image contract, cache invalidation and JPEG policy
 `src/lib/proximity` carries the dashboard's category, shortlist and routing logic.
 The proximity SQL and computation were ported from the dashboard. Their business
 rules are preserved. These are independent local modules, with no runtime
-imports from sibling repositories. Keep provider-policy changes coordinated
-until the old cron execution is retired.
+imports from sibling repositories. Related policy/reader modules and explicit
+maintenance tools remain in the backends. Coordinate policy and format changes
+across these copies even though scheduled processing now runs here.
 
 ## Verification
 
@@ -123,7 +131,11 @@ podman run --detach --name warehouse-enricher-test --memory=768m --cpus=1 \
   -p 127.0.0.1:55438:5432 docker.io/postgis/postgis:17-3.5
 
 # Wait until pg_isready succeeds inside the test container.
-ENRICHER_TEST_DATABASE_URL=postgresql://postgres:enricher-local-test@127.0.0.1:55438/enricher_test npm test
+export DATABASE_URL=postgresql://postgres:enricher-local-test@127.0.0.1:55438/enricher_test
+export ENRICHER_TEST_DATABASE_URL="$DATABASE_URL"
+export CRON_SECRET=enricher-local-test-only
+NODE_ENV=test npm test
+python3 -m unittest discover -s tests -p '*_test.py' -v
 podman rm -f warehouse-enricher-test
 ```
 

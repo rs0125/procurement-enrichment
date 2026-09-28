@@ -1,7 +1,9 @@
 # CLAUDE.md
 
 Notes for future Claude Code sessions. Start with [README.md](./README.md) for
-human-facing orientation; this file is a terse pointer index.
+human-facing orientation and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
+enterprise context, data ownership, consumer fallbacks and the current execution
+model. This file is a terse pointer index.
 
 ## Enrichment service layer
 
@@ -34,7 +36,8 @@ shared locks, endpoints, handoff procedure and stability gate before queues.
 |---|---|
 | What does endpoint X do? | `docs/HTTP_API.md` |
 | Enrichment CLI and CI | `docs/ENRICHMENT_SERVICES.md`, `docs/CI.md` |
-| Why is the architecture like this? | `docs/geocode-cron-spec.md` |
+| Service architecture and enterprise relationships | `docs/ARCHITECTURE.md` |
+| Original geocoder design history | `docs/geocode-cron-spec.md` (current API is in `docs/HTTP_API.md`) |
 | Live AWS resources / ops commands | `deploy/AWS_DEPLOYMENT.md` |
 | Backup spec | `deploy/DB_BACKUP.md` (script lives in `deploy/backup/`) |
 | Live pg_cron SQL on Supabase | `sql/pg_cron_setup.sql` (gitignored — has secret) |
@@ -88,9 +91,10 @@ designated image and proximity fields, as documented in `docs/ENRICHMENT_SERVICE
   logic that now lives in `src/lib/googleMaps/`. The spec
   (`docs/geocode-cron-spec.md:188`) explicitly defers refactoring the script
   to share the lib code. Don't pre-emptively unify.
-- `deploy/README.md` and `deploy/AWS_DEPLOYMENT.md` overlap. `AWS_DEPLOYMENT.md`
-  is the current truth (it describes the actual live setup with Caddy);
-  `deploy/README.md` is the older pre-Caddy bootstrap and is slightly stale.
+- `docs/CD.md` is authoritative for releases, isolation and rollback.
+  `deploy/AWS_DEPLOYMENT.md` records host/bootstrap context with Caddy;
+  `deploy/README.md` is the older pre-Caddy bootstrap. Do not replace the current
+  release flow with an older pull/restart recipe.
 
 ## Verifying claims about live state
 

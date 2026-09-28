@@ -2,12 +2,13 @@
 
 The existing triggers call bounded batches on this EC2 service. There is no
 durable queue or producer change. Each image action still has its own entry point.
+See [Architecture and enterprise context](ARCHITECTURE.md) for the complete flow.
 
 | Trigger | Enricher route | Work |
 |---|---|---|
 | Supabase `sweep-warehouse-image-labels`, every 15 minutes | `POST /cron/enrichment` | Scene labels, document kinds, website approvals, proximity |
 | CMS nightly website build, 20:30 UTC / 02:00 IST | Website backend forwards `/maintenance/webp` to this service | WebP inventory, due compression, legacy projection repair |
-| Supabase `geocode-recent`, 21:27 UTC / 02:57 IST | `POST /cron/geocode-recent` | Existing recent-warehouse geocoder |
+| Supabase `geocode-recent`, 21:27 UTC / 02:57 IST | `POST /cron/geocode-recent` | Up to 100 recent warehouses through the shared geocode action, ten-minute budget |
 | systemd backup timer, 22:30 UTC / 04:00 IST | No HTTP route | Existing database backup |
 
 The CMS still starts its website build independently. No rebuild is triggered by
@@ -19,7 +20,7 @@ image processing. JPEG remains an explicit action; there was no JPEG cron to por
 with caps of 50, 50, 12 images and 5 warehouses. The overall work budget is ten
 minutes, with smaller stage budgets. A failed stage does not suppress unrelated
 stages. `/cron/webp` has a 45-minute budget and processes at most 500 images.
-Both return HTTP 202 after the existing `CronRunLog` table records the run;
+These and `/cron/geocode-recent` return HTTP 202 after `CronRunLog` records the run;
 acceptance does not mean the work succeeded. GET on the same route returns the
 last run and its final counts. POST with `{"dryRun":true}` only reads backlog and
 configuration. These routes use the existing `CRON_SECRET` bearer.
@@ -28,8 +29,9 @@ The compatibility `/maintenance/webp` GET/POST uses the existing scoped HMAC
 credential from the website backend. It accepts no raw R2 key. The website backend
 forwards requests and never starts a second local compressor if EC2 is unavailable.
 
-One image/proximity action executes at a time. Overlapping batches wait within
-their own time budget before invoking the next action; they do not preclaim images
+One enrichment action executes at a time, including geocoding. Overlapping
+batches wait within their own time budget before invoking the next action;
+they do not preclaim images
 or store a queue of payloads. Native compression retains the existing disk buffers,
 decoder child, memory admission checks and systemd memory limit. Restart/shutdown
 aborts work, waits for cleanup and records a partial run when possible. A crashed
@@ -50,7 +52,7 @@ is no compression backlog, fences concurrent media edits, and preserves null slo
 ## Deployment and handoff
 
 1. Run local tests against disposable PostGIS, then push the enricher. Wait for
-   CI and EC2 CD to pass. Verify both cron previews and their configuration.
+   CI and EC2 CD to pass. Verify all three cron previews and their configuration.
 2. Verify the old website WebP job is not running, then deploy the website
    backend handoff. The CMS route, schedule and credential remain unchanged.
    Verify authenticated GET/POST still reach the new job.
