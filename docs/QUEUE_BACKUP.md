@@ -37,8 +37,10 @@ pairs. Backup setup precedes application promotion. Verify effective `User`,
 `MemoryMax` on both units, then run a backup and isolated restore. No new AWS or
 database key is required. These host changes were deployed on 1 October 2026;
 the first production bundle uploaded successfully. The production-shaped restore
-and queue round-trip passed after the local restore-helper fixes described in the
-[production record](PRODUCTION_2026-10-01.md); release those fixes before cutover.
+and queue round-trip passed after the restore-helper fixes described in the
+[production record](PRODUCTION_2026-10-01.md). Those fixes were released as
+`fe6a8e9`; the installed helper matches. A live backup at 18:20 UTC on 1 October
+included `enrichment_jobs`, `enrichment_dead`, and the private `enrichment` schema.
 
 ## Isolated recovery
 

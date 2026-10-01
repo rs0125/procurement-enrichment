@@ -1,9 +1,11 @@
-# Durable enrichment queue: proposed architecture
+# Durable enrichment queue: architecture
 
-Status: **design proposal, 29 September 2026**. No queue, migration or new trigger
-is deployed by these documents. The [current architecture](ARCHITECTURE.md)
-remains authoritative for production. The two-night cron stability gate in
-[CRON_MIGRATION.md](CRON_MIGRATION.md#stability-gate-before-queue-work) still applies.
+Design recorded 29 September 2026; initial production activation completed
+1 October, 20:23 UTC. The [current architecture](ARCHITECTURE.md),
+[setup runbook](QUEUE_SETUP.md) and [production record](PRODUCTION_2026-10-01.md#queue-activation)
+describe the deployed state and the remaining nightly observation. The design
+details below explain the decisions; historical rollout gates are not evidence
+that every observation period has elapsed.
 
 Read this document for the decision and system boundaries, the
 [work contract](QUEUE_CONTRACT.md) for delivery and concurrency semantics, and the
@@ -12,7 +14,7 @@ Read this document for the decision and system boundaries, the
 ## Recommendation
 
 The [local PGMQ evaluation](PGMQ_EVALUATION.md) replaces the earlier custom-table
-preference. Production remains on crons.
+preference. PGMQ now owns production delivery; crons remain for reconciliation.
 
 Use **Supabase Queues / PGMQ in the existing Supabase database**, consumed
 by the existing enricher EC2 service. Start with one active enrichment action,
@@ -59,7 +61,7 @@ valid. Neither guarantee makes external provider billing exactly-once.
 Supabase Queues is based on PGMQ and offers persistence and a delivery visibility
 window; that is useful infrastructure, not an end-to-end promise about model calls
 or R2 publication. [Supabase Queues documentation](https://supabase.com/docs/guides/queues).
-Our project offers PGMQ 1.5.1, currently not enabled. Use only verified APIs from
+Our project has PGMQ 1.5.1 installed. Use only verified APIs from
 that version; the newer upstream release is not automatically available to us.
 The local evaluation found stale acknowledgement and logical-backup pitfalls;
 those are explicit rollout gates, not reasons to skip the application guards.
@@ -111,12 +113,10 @@ This is an explicit availability tradeoff: a stopped EC2 does not prevent saves,
 but a broken outbox insertion must fail the save, rather than acknowledge a write
 whose durable event is missing. Test that API error behavior before enabling it.
 
-Staged promotion needs particular care: the current dashboard creates a warehouse
-and links the approved staging record in separate operations, with compensating
-deletion on failure. Before enabling immediate consumption, make that creation
-and link one transaction or provide an equally strong committed-promotion gate.
-A delay of a few seconds is not a substitute for that gate. Drafts/rejections
-must not cause provider work.
+Staged promotion commits the warehouse, details and approval link in one
+transaction in dashboard revision `acec800`. The source event shares that
+transaction, so a failed promotion leaves no provisional work. Drafts/rejections
+must not cause provider work; a delay before processing is not an atomicity gate.
 
 The website backend's current relevant path is reading galleries and forwarding
 maintenance requests; it does not need a second queue SDK. Any future/direct

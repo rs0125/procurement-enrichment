@@ -1,10 +1,10 @@
 # Warehouse enrichment services
 
 See [Architecture and enterprise context](ARCHITECTURE.md) for data ownership,
-integrations and consumer behaviour. This is the service layer for the future
-queue worker. Each action receives one explicit image or warehouse ID.
-[Scheduled batches](CRON_MIGRATION.md) now compose these actions using the
-existing cron triggers. There is no durable queue yet.
+integrations and consumer behaviour. Each action receives one explicit image or
+warehouse ID. Production uses the guarded PGMQ consumer as of 1 October 2026;
+[scheduled batches](CRON_MIGRATION.md) remain as reconciliation. See
+[queue setup](QUEUE_SETUP.md) for delivery modes, prerequisites and rollback.
 
 | Service | Input | Behaviour |
 |---|---|---|
@@ -45,24 +45,29 @@ cron endpoint. For example, the JSON body for `POST /enrichment/webp` is:
 {"imageId":123,"dryRun":true}
 ```
 
-Results use `READY`, `SKIPPED`, `DEFERRED`, `PARTIAL`, `FAILED`, `UNSUPPORTED`,
+In production queue mode, action POSTs return HTTP 202 with `QUEUED` and a
+message ID; this acknowledges durable intent, not a completed image. Use
+`GET /queue/status` and domain/run records to check progress. Dry runs remain
+read-only. Inline cron/shadow action results use `READY`, `SKIPPED`, `DEFERRED`, `PARTIAL`, `FAILED`, `UNSUPPORTED`,
 `STALE`, or `DRY_RUN`. `DEFERRED` means the caller should return later; no job is
 stored in memory. `STALE` means the result lost its ownership/source check and
-was not published. A future queue consumer must inspect the result, not just
-the HTTP status. Paid model calls that time out still consume a stage attempt.
+was not published. The queue dispatcher rereads domain state to decide whether
+to finish, defer or reject delivery. Paid model calls that time out still consume
+a stage attempt.
 
 ## Safety and memory
 
 - Existing per-stage database claims and token/lease fencing protect labels,
   document kinds, website decisions and WebPs. Ready stages are not rerun.
 - JPEG writes retain the existing source/classification/result checks and
-  preserve every non-JPEG field. JPEG retries will be scheduled by the future
-  queue; this service only processes an explicitly requested image.
+  preserve every non-JPEG field. The queue schedules retries for explicitly
+  requested JPEG work; refresh does not automatically request a fleet backfill.
 - Warehouse media and raw image objects are retained. Only the existing
   `photosWebp` compatibility projection is refreshed for affected warehouses.
-- One enrichment action executes per process. Overlapping calls return
-  `DEFERRED` immediately. Different processes still coordinate image stages
-  through their existing database claims.
+- One enrichment action executes per process. Queue admission happens before
+  claiming, without prefetch. Inline cron/shadow calls return `DEFERRED` when busy.
+  The production consumer also holds an exclusive database session lock, and
+  publication checks source, receipt and existing stage/attempt ownership.
 - Admission checks consider host and cgroup memory. Native encodes run in a
   child with a 64 MiB JS heap, a 256 MiB RSS guard, a 16-megapixel input cap,
   and a 30-second deadline. Compression downloads are capped at 20 MiB and
@@ -101,13 +106,14 @@ both service units on the same port. Successful main CI triggers
 and the separate 04:00 IST backup timer remain compatible. The dashboard and
 website cron handoff is described in [Scheduled enrichment](CRON_MIGRATION.md).
 
-The Prisma additions describe existing shared tables only. There is no database
-migration in this change. Do not run `prisma db push` against Supabase.
+The Prisma schema describes existing shared domain tables. Queue setup uses
+reviewed additive SQL under `sql/queue/`; do not run `prisma db push` against Supabase.
 
 ## Module layout and provenance
 
 `src/services/enrichment/` contains one module per action, with a small registry
-in `index.mjs`. HTTP and CLI call that registry; a future queue can call it too.
+in `index.mjs`. HTTP/CLI/cron delivery routes through `queue/deliveryServices.mjs`;
+the queue dispatcher invokes guarded `runQueued` adapters on that registry.
 Repositories live under `src/models/images`, `geocode`, and `proximity`.
 
 `src/lib/images` carries the dashboard's tested classification prompts,
@@ -149,6 +155,8 @@ size/origin limits, cancellation, cleanup, authentication, independent services,
 preservation of completed reviews, exclusive image claims, original preservation,
 JPEG publication races and coordinate races. They do not call paid providers or R2.
 
-Queue delivery and producer hooks are deferred until the migrated crons are
-stable through at least two nightly cycles. Website rebuild scheduling stays
-independent; this layer only provides the existing cache invalidation.
+The full queue/backup suite needs additional isolated database variables; see
+[queue verification](QUEUE_SETUP.md#local-verification). Production queue capture
+and consumption are enabled, with two complete nightly cycles still to observe
+before reducing recovery paths. Website rebuild scheduling stays independent;
+this layer only provides the existing cache invalidation.

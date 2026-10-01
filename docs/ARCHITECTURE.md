@@ -1,6 +1,6 @@
 # Warehouse enricher: service and enterprise context
 
-This document describes the operating model as of 28 September 2026. Start here
+This document describes the operating model as of 1 October 2026. Start here
 for the service's purpose and relationships; use the linked runbooks for commands.
 The project is **warehouse-enricher**, in the
 [procurement-enrichment repository](https://github.com/rs0125/procurement-enrichment).
@@ -23,7 +23,10 @@ a warehouse or generating a PPT does not wait for this worker's model calls.
 flowchart LR
     Staff[Procurement dashboard] --> Dashboard[Dashboard backend]
     Dashboard -->|warehouse edits and image registration| DB[(Supabase Postgres)]
-    Cron[Supabase pg_cron and pg_net] -->|scheduled HTTP triggers| Worker[Warehouse enricher on EC2]
+    DB -->|transactional source triggers| Queue[(PGMQ enrichment jobs)]
+    Queue -->|one guarded consumer| Worker[Warehouse enricher on EC2]
+    Cron[Supabase pg_cron and pg_net] -->|reconciliation HTTP triggers| Worker
+    Worker -->|repair and dependent jobs| Queue
     Worker <-->|source data and enrichment results| DB
     Worker <-->|original reads and variant writes| R2[(Cloudflare R2)]
     Worker --> Providers[Google Maps / OpenAI / Mapbox]
@@ -64,7 +67,8 @@ separate systemd job, outside the enrichment action executor.
 | `GeocodeAttempt` | Per-warehouse geocoding attempts, success and retry eligibility. |
 | `warehouse_proximity` | Derived landmark answers, distances, provider, source coordinates and provenance per warehouse/category. |
 | OSM/POI tables and coverage records | Inputs maintained by the separate ingestion workflow. The enricher requires sufficient coverage before computing results. |
-| `CronRunLog` | Shared operational history and scheduled-run locks, distinguished by `jobName`. Not a durable message queue. |
+| `CronRunLog` | Shared operational history, scheduled-run locks and guarded JPEG/geocode/proximity attempt metadata, distinguished by `jobName`. |
+| Private `pgmq` / `enrichment` schemas | Durable ID-only jobs, receipts, archives, dead letters, paged refresh and guarded queue operations. Not exposed to browser roles. |
 
 A registry row's `imageId` is different from a `warehouseId`. One original URL
 can appear in multiple warehouses. Current associations come from warehouse
@@ -127,21 +131,23 @@ an import alone does not authorize a paid recomputation of every warehouse.
 
 ### New warehouse or media edit
 
-1. The dashboard backend commits the warehouse change (or staged approval).
-2. Its image hook registers current URLs without resetting existing results.
-   Registration failure does not turn an accepted warehouse write into an error;
-   the scheduled reconciliation can recover missed registration.
-3. The enrichment sweep reconciles membership and processes due labels,
-   document subtypes, website assessments and proximity. The nightly geocoder
-   supplies missing coordinates for eligible recent warehouses; proximity can
-   then complete in a later sweep.
-4. The separate WebP batch produces website variants. JPEG is currently an
-   explicit action, not an automatic cron stage for every new image.
-5. Readers use the latest available fields and their own fallback policies.
+1. The dashboard commits the warehouse change or atomic staged approval. Database
+   triggers enqueue a warehouse refresh in that same transaction. Imports and
+   direct SQL writes share this boundary; rolled-back writes create no work.
+2. The retained dashboard image hook registers URLs as a best-effort shortcut.
+   The durable refresh also registers missing rows and plans work in pages of ten
+   images, without resetting completed labels, variants or privacy decisions.
+3. One EC2 queue consumer runs independent label/caption, website-assessment and
+   WebP jobs. Document subtype waits for a scene label; proximity waits for valid
+   coordinates. Existing geocoding scope, attempts and cooldowns still apply.
+4. Crons remain scheduled to reconcile missed work, repair WebP projections and
+   perform inventory checks. They enqueue due actions instead of running a second
+   set of providers. JPEG is explicit, not automatically generated for every image.
+5. Website/PPT readers consume stored fields using the existing fallback policies.
 
-Both backends use the image registry automatically. There are no
-`IMAGE_PIPELINE_READS_ENABLED` / `IMAGE_PIPELINE_WRITES_ENABLED` switches to set.
-Dashboard hooks register data; they do not currently enqueue durable messages.
+Both backends use the registry automatically, without image-pipeline read/write
+flags. The queue worker is enabled by host configuration; repository defaults
+remain cron mode for safe startup on other environments.
 
 ### Public website
 
@@ -188,20 +194,21 @@ The registry therefore keeps both explicit variants as well as the original.
 | Supabase `sweep-warehouse-image-labels` → `POST /cron/enrichment` | Reconcile; up to 50 labels, 50 document kinds, 12 website assessments, 5 proximity warehouses; 10-minute overall budget | Every 15 minutes |
 | CMS → website backend → EC2 `/maintenance/webp` | Same job as `/cron/webp`: complete R2 inventory check, due compression, legacy projection repair; at most 500 images / 45 minutes | Nightly website build trigger, 20:30 UTC / 02:00 IST |
 | Supabase → `POST /cron/geocode-recent` | Up to 100 recent eligible warehouses / 10 minutes, paced by two seconds | 21:27 UTC / 02:57 IST |
-| `warehouse-geocoder-backup.timer` | Separate `pg_dump` → S3, using its existing backup configuration | 22:30 UTC / 04:00 IST |
+| `warehouse-geocoder-backup.timer` | Separate consistent domain/PGMQ snapshot → S3, using its existing backup configuration | 22:30 UTC / 04:00 IST |
 
 The geocoder selects warehouses created or status-updated within seven days,
 with a Maps URL and missing coordinates. Successful attempts are excluded;
 failed attempts are bounded at five and spaced at least 24 hours apart. Older
 inventory has explicit backfill tooling, outside the nightly scope.
 
-The enrichment sweep runs **label → document → website → proximity**. Each
-stage has its own time/count budget so a failed stage does not suppress unrelated
-stages. Scheduled batches can overlap, but **one enrichment action executes at a
-time in this process**, including geocoding. Batches wait within their own budget;
-direct action requests return `DEFERRED` when the worker is busy. There is no
-in-memory payload backlog. HTTP handling and the separate backup can still run
-concurrently, so the host is not doing only one operation in total.
+The reconciliation sweep visits **label → document → website → proximity**
+under stage budgets. In production queue mode it enqueues due work; provider
+execution belongs to the single consumer. Direct action POSTs return HTTP 202
+with `QUEUED` and a message ID. One action executes at a time, reserving memory
+before claiming; there is no prefetched payload backlog. Independent actions can
+be delivered in any order, with prerequisites and follow-ups persisted in the DB.
+HTTP, reconciliation and the separate backup can run concurrently. In cron/shadow
+rollback modes the same bounded inline actions remain available.
 
 Scheduled POSTs return `202` once the run is recorded, not when processing has
 completed. GET on the same cron route returns progress; POST with
@@ -218,9 +225,9 @@ lease and source identity; stale results cannot overwrite a newer owner. Ready
 stages are skipped. A website `BLOCK` or `REVIEW` is a completed assessment, not a
 processing failure to keep retrying until it becomes allowed.
 
-JPEG has guarded source/classification/result publication rather than the same
-scheduled stage-claim workflow. Geocoding and proximity likewise check source
-coordinates/URL before publication. Each action changes its designated fields;
+JPEG, geocoding and proximity use guarded attempt metadata in `CronRunLog` under
+queue delivery. Every queued publication checks current source and receipt
+ownership in addition to its domain-stage guards. Each action changes its designated fields;
 it does not rewrite the whole warehouse or image record.
 
 Interrupted work is recoverable, but provider billing is not exactly-once: a
@@ -262,7 +269,7 @@ variant storage. `IMAGE_PIPELINE_CACHE_URL` is optional. Missing provider
 configuration is reported for the relevant action rather than requiring all
 providers for basic geocoding and health checks.
 
-`/health` is public. `/enrichment` and `/cron/*` use `CRON_SECRET` bearer auth.
+`/health` is public. `/enrichment`, `/cron/*` and `/queue/status` use `CRON_SECRET` bearer auth.
 The compatibility `/maintenance/webp` route uses the existing purpose-specific
 HMAC bearer derived from the shared R2 secret; the underlying R2 secret is never
 sent as that bearer. Do not print environment files or raw scheduled SQL, which
@@ -315,33 +322,23 @@ PostGIS for fixture/fault tests; never point them at production. Backup/restore
 scope, including the excluded Supabase `auth` schema, is in the
 [backup runbook](../deploy/DB_BACKUP.md).
 
-## Next architectural step: durable queues
+## Queue deployment and observation
 
-Queues are not deployed. The current agreement is to observe at least two full
-nightly cycles, with real provider/compression work and understood retries,
-before changing delivery. The existing action interfaces are the reusable part.
+PGMQ 1.5.1, private wrappers/grants and source triggers are installed. Normal
+queue consumption began at 20:23 UTC on 1 October. The existing EC2 host runs
+one consumer; no broker host or new credentials were added. Crons remain as
+reconciliation, and their inline implementation is retained for rollback.
 
-The [queue architecture proposal](QUEUE_ARCHITECTURE.md) recommends one durable
-PGMQ queue with transactional enqueueing, narrow source
-triggers and one bounded consumer in this EC2 service. Existing actions and
-reconciliation are retained. This is a proposed direction, not a deployed change
-or a claim that the stability gate has passed.
+The [production record](PRODUCTION_2026-10-01.md#queue-activation) contains the
+capture/rollback, live backup, bounded execution and memory checks. Two complete
+nightly cycles under queue ownership remain to be observed before reducing any
+recovery path. The initial activation does not certify sustained throughput or
+exactly-once provider billing.
 
-The [PGMQ evaluation](PGMQ_EVALUATION.md) records local tests and the extension
-version, stale-acknowledgement and backup findings. The
-[integration/setup guide](QUEUE_SETUP.md) records the implemented action adapters,
-worker lifecycle, atomic approval and consistent backup, plus the deployment
-and observation gates still required before activation. The
-[delivery contract](QUEUE_CONTRACT.md) covers ID messages, receipt ownership,
-retry policy and stale-result fencing. The
-[rollout plan](QUEUE_ROLLOUT.md) covers shared eligibility, staged-promotion
-atomicity, API-only deployment canaries, private-schema backup, shadow delivery,
-restricted execution, verification and rollback.
-
-Changing scheduling must preserve the existing originals, shared-image
-membership rules, separate classification/approval decisions, consumer fallbacks,
-and resource budgets. It must not make warehouse writes or PPT exports wait for
-provider calls.
+See [queue architecture](QUEUE_ARCHITECTURE.md), [delivery contract](QUEUE_CONTRACT.md),
+[setup](QUEUE_SETUP.md), [backup/recovery](QUEUE_BACKUP.md) and
+[rollout/rollback](QUEUE_ROLLOUT.md). Keep host configuration and source capture
+separate: disabling triggers alone does not stop an active consumer.
 
 ## Further reference
 

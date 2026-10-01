@@ -1,20 +1,26 @@
 # Queue migration: implementation, verification and rollout
 
-Status, 1 October 2026: **application deployed in cron mode; queue capture and
-consumption remain disabled**. See the [production record](PRODUCTION_2026-10-01.md)
-for completed deployment checks and the remaining gates. This document does not authorize or
-perform production schema/trigger changes. Implement the
-[architecture](QUEUE_ARCHITECTURE.md) and [delivery contract](QUEUE_CONTRACT.md)
-in small reviewed steps, retaining working cron delivery until its replacement
-has passed the gates below.
+Status, 1 October 2026, 20:23 UTC: **production queue consumption is enabled**.
+The additive SQL, private grants, source capture, real-backup restore, live backup
+and restricted trial passed. The restriction is removed; one worker owns provider
+execution, and cron schedules remain as reconciliation. See the
+[production record](PRODUCTION_2026-10-01.md#queue-activation) for evidence and limits.
+
+The phases below preserve the original rollout checklist. The initial target of
+two additional healthy cron-only nights after memory recovery was not completed.
+Cutover followed supervised capture/rollback, real JPEG execution, reuse, privacy,
+cooldown, memory and backup checks. Two full nights under queue ownership remain
+an observation gate before reducing any recovery paths; do not describe that
+observation or sustained provider throughput as already verified.
 
 Implementation update, 30 September: [QUEUE_SETUP.md](QUEUE_SETUP.md) records the
 seven guarded action adapters, paged refresh, durable retry accounting, worker
 lifecycle/canary isolation, atomic dashboard approval and consistent backup/restore.
 Local integration gates are implemented and tested, including the
-[adversarial review](QUEUE_ADVERSARIAL_REVIEW.md). Production baseline, updated
-installed helper, deployment, SQL/grants, shadow observation and execution checks
-remain. Crons stay active through shadow and become reconciliation at cutover.
+[adversarial review](QUEUE_ADVERSARIAL_REVIEW.md). The installed helper, deployment,
+SQL/grants, supervised shadow capture and restricted execution have now been
+verified in production. Crons remain active as reconciliation and retain their
+inline implementation for rollback.
 
 Source baseline inspected: enricher `f4ba72f`, dashboard cleanup `85793e0`, and
 website backend cleanup `da6a906`. Existing local bulk-geocoding and other unrelated
@@ -22,8 +28,8 @@ work is outside this plan. This documentation pass does not newly certify live
 cron stability or current infrastructure measurements.
 
 The [PGMQ evaluation](PGMQ_EVALUATION.md) selects PGMQ as the proposed transport.
-Its local primitive tests are complete; production integration and the gates
-below remain outstanding.
+Its local primitive tests and initial production integration are complete;
+the phase-six observation period remains outstanding.
 
 ## Phase 0: establish the baseline
 

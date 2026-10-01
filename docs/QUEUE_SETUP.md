@@ -1,8 +1,10 @@
 # Queue integration and Supabase setup
 
-Status: local implementation, 30 September 2026. Production still processes
-through the existing EC2 crons. This work does not install production SQL,
-change production settings, push commits, or deploy either backend.
+Status: **production queue mode enabled**, 1 October 2026, 20:23 UTC. PGMQ 1.5.1,
+private wrappers/grants and both source triggers are installed. The unrestricted
+worker is active; scheduled crons now reconcile/enqueue. The restricted trial,
+transactional capture checks and live queue-aware backup passed. See the
+[production evidence and remaining observation](PRODUCTION_2026-10-01.md#queue-activation).
 
 ## Flow and boundaries
 
@@ -82,8 +84,8 @@ Do not run cron provider execution alongside an active queue worker.
 
 ## Supabase and deployment
 
-The read-only check on 30 September found PGMQ 1.5.1 available but uninstalled,
-and the existing server login able to create objects/manage roles. Use the
+PGMQ 1.5.1 and the reviewed additive setup were installed on 1 October. The
+existing server login could create the extension, schemas and roles. Use the
 existing `DATABASE_URL`, provider credentials and `BACKUP_DATABASE_URL`: no new
 Supabase API key, AWS key or R2 key is needed. Keep `pgmq` and `enrichment` private;
 never grant browser roles access or expose these schemas through PostgREST.

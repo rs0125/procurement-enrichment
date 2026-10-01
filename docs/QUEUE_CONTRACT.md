@@ -1,13 +1,14 @@
 # Enrichment delivery contract with PGMQ
 
-Status: **proposed, not a migration**, 29 September 2026. The
+Design contract recorded 29 September 2026; implemented and activated on
+1 October. See [production status](PRODUCTION_2026-10-01.md#queue-activation). The
 [PGMQ evaluation](PGMQ_EVALUATION.md) replaces the earlier custom work-table
-contract. Production still uses crons. Read with the
+contract. Production uses queue delivery with retained cron reconciliation. Read with the
 [architecture](QUEUE_ARCHITECTURE.md) and [rollout](QUEUE_ROLLOUT.md).
 
 ## Queue messages and source identity
 
-Use one fixed, durable PGMQ queue initially, proposed name `enrichment_jobs`, plus
+Use the fixed, durable PGMQ queue `enrichment_jobs`, plus
 an operator-inspected dead-letter queue. Keep the `pgmq` schema outside browser
 API access. Use the existing server-side `pg` pool; no Edge Function or second
 queue SDK is required. Do not use unlogged queues.
