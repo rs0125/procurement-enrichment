@@ -62,19 +62,49 @@ completed in approximately 18 seconds and uploaded a 26,931,200-byte
 and domain-dump checksum were inspected after download into a private directory.
 There were no queues installed to export yet.
 
-The real restore rehearsal is still incomplete. Production uses PostgreSQL
-17.6 with PostGIS 3.3.7, pg_net 0.20.4, pg_cron 1.6.4, vector 0.8.2 and Supabase
-Vault 0.3.1, among other extensions. The ordinary local PostGIS test image does
-not provide that full extension set. Pulling the matching Supabase image hit
-the workstation's disk limit and was stopped. Do not weaken manifest version
-checks or claim the fixture round-trip proves this production restore.
+After disk space was freed, the production-shaped restore rehearsal passed
+using `supabase/postgres:17.6.1.178`, PostgreSQL 17.6 and all nine exact manifest
+extension versions. The image digest used was
+`sha256:49c938c7918f1543618b60568f5a995e52d98f19883075a14f89643e8b1571fe`.
+The source and recovery containers had networking disabled, private Unix
+sockets, disabled cron execution, a 768 MiB memory limit and one CPU each.
+The required RLS role identities were created with no login access; see
+[QUEUE_BACKUP.md](QUEUE_BACKUP.md) for the prerequisites.
+
+The real bundle restored in 21.6 seconds. Independent data extraction compared
+per-table counts and order-independent SHA-256 row digests: all 365,077 backed-up
+rows across 53 table-data sections matched, as did all 20 exported sequence
+values. This includes 2,694 warehouse rows with their original `media` and
+17,285 image rows. The extension-managed baseline is supplied by the exact
+extension versions; this result does not certify R2 bytes, authentication data
+or production login credentials omitted from the bundle.
+
+An additional queue round-trip on the isolated production-shaped database
+passed in 25.6 seconds. It preserved four pending jobs (including one claimed
+job with its read count and visibility timestamp), two archived jobs and one
+dead letter. Checks confirmed transactional source capture/rollback, ignored
+no-op updates, a consistent domain/queue snapshot boundary, sequence allocation
+without reusing later IDs, refusal to overwrite a nonempty destination, and
+no invalid indexes. Public web roles could not use the private wrappers. After
+reinstalling the documented grants, the restricted worker passed queue doctor
+and remained unable to read raw queue tables.
+
+The rehearsal found and locally fixed two restore-helper defects: attempting
+`CREATE SCHEMA IF NOT EXISTS pg_catalog`, and treating the successful early
+input close from `pg_restore --list` as an archive failure. The latter exception
+is limited to catalog listing and still requires exit status zero; data restore
+and COPY streams retain strict failure handling. Both have regression coverage.
+With the locked Prisma 7.10.0 dependencies, all 133 JavaScript tests passed with
+no skips, and all 19 deployment tests passed. These restore fixes are local at
+this checkpoint and still need release; no production service or queue setting
+was changed by this rehearsal.
 
 ## Next cutover gates
 
 1. Observe useful scheduled processing after this recovery, including nightly
    WebP/geocoding and backup cycles; check backlog age as well as HTTP health.
-2. Complete the isolated production-shaped restore with matching extensions and
-   enough local disk, without enabling restored cron jobs or external callbacks.
+2. Release the restore-helper fixes verified above. The isolated real-backup
+   restore and production-shaped queue round-trip gates are now complete.
 3. Apply the reviewed additive bootstrap/capture functions, verify grants, and
    enable shadow capture only after those checks. Preserve `Warehouse.media`.
 4. Follow the restricted-subject execution trial and widening procedure in

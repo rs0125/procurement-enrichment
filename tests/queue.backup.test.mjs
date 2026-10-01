@@ -31,6 +31,19 @@ test('backup cancellation waits for a SIGTERM-ignoring child to be killed',{time
   }
 });
 
+test('archive catalog readers may close input early only when explicitly allowed and successful',async()=>{
+  const directory=await mkdtemp(join(tmpdir(),'enricher-catalog-test-')),inputFile=join(directory,'large-archive');
+  try {
+    await writeFile(inputFile,Buffer.alloc(4*1024*1024,65));
+    const commands=code=>({reader:[process.execPath,'-e',
+      'process.stdin.once("data",()=>{process.stdin.destroy();process.exit('+code+');})']});
+    const options={inputFile,env:{PATH:process.env.PATH}};
+    await command('reader',[],{...options,commands:commands(0),allowEarlyInputClose:true});
+    await assert.rejects(command('reader',[],{...options,commands:commands(1),allowEarlyInputClose:true}),/Backup command failed/);
+    await assert.rejects(command('reader',[],{...options,commands:commands(0)}),/Backup command failed/);
+  } finally {await rm(directory,{recursive:true,force:true});}
+});
+
 test('restore refuses omitted, duplicate and mismatched queue metadata before connecting',async()=>{
   const good={format:'wareongo-postgres-queue-v1',schemas:['public','enrichment'],
     extensions:[{name:'pgmq',schema:'pgmq',version:'1.5.1'}],queues:['jobs'],
@@ -82,6 +95,8 @@ test('streamed backup restores a consistent domain + PGMQ snapshot, including re
     await admin.query('CREATE DATABASE '+sourceName);sourceCreated=true;
     await admin.query('CREATE DATABASE '+restoreName);restoreCreated=true;
     await source.connect();await restored.connect();
+    // Exercise a built-in extension schema, as production pg_cron uses pg_catalog.
+    await source.query('CREATE EXTENSION pg_trgm WITH SCHEMA pg_catalog');
     await source.query('CREATE TABLE public.before_queue_fixture(id int); INSERT INTO public.before_queue_fixture VALUES(1)');
     const bare=await createSnapshot({connectionString:makeUrl(sourceName),output:join(directory,'before-queue.tar'),commands:commandsFor(sourceName)});
     assert.deepEqual(bare.queues,[]);
@@ -115,6 +130,7 @@ test('streamed backup restores a consistent domain + PGMQ snapshot, including re
     assert.equal((await restored.query('SELECT queue_name FROM pgmq.meta')).rows[0].queue_name,'existing_fixture');
     await restored.query("SELECT pgmq.drop_queue('existing_fixture')");
     await restoreSnapshot({connectionString:makeUrl(restoreName),directory,commands:commandsFor(restoreName)});
+    assert.equal((await restored.query("SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pg_trgm'")).rows[0].nspname,'pg_catalog');
     assert.deepEqual((await restored.query('SELECT * FROM public.backup_fixture ORDER BY id')).rows,[{id:1,value:'before'}]);
     for(const [table,rows] of Object.entries(expected)) assert.deepEqual((await restored.query('SELECT * FROM pgmq.'+table+' ORDER BY 1')).rows,rows,table);
     assert.equal((await restored.query('SELECT read_ct FROM pgmq.q_enrichment_jobs WHERE msg_id=$1',[owner.msg_id])).rows[0].read_ct,1);

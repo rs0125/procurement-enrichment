@@ -19,7 +19,7 @@ export function postgresEnvironment(connectionString) {
     PGSSLMODE:url.searchParams.get('sslmode')||'prefer',PGCONNECT_TIMEOUT:'10',PGOPTIONS:'-c statement_timeout=1200000 -c lock_timeout=10000'};
 }
 // Stdout goes straight to disk. Neither process arguments nor errors contain the DB URL.
-export async function command(name,args,{commands={},env,cwd,output,input,inputFile,signal=timeout()}={}) {
+export async function command(name,args,{commands={},env,cwd,output,input,inputFile,allowEarlyInputClose=false,signal=timeout()}={}) {
   signal.throwIfAborted();
   const [executable,...prefix]=commands[name]??[name];
   const file=output?await open(output,'wx',0o600):null;
@@ -41,7 +41,12 @@ export async function command(name,args,{commands={},env,cwd,output,input,inputF
     if(signal.aborted) abort();
     const feeding=(inputFile?pipeline(createReadStream(inputFile),child.stdin)
       :input?pipeline(Readable.from([input]),child.stdin):Promise.resolve())
-      .catch(()=>{failed=true;abort();});
+      .catch(error=>{
+        // pg_restore --list intentionally stops after the catalog. A large archive
+        // can still be feeding stdin when it exits; require exit 0 independently.
+        if(allowEarlyInputClose && error.code==='EPIPE') return;
+        failed=true;abort();
+      });
     await Promise.all([completed,feeding]);
     if(failed || signal.aborted) throw new Error(`Backup command failed: ${name}`);
   } finally {
@@ -167,7 +172,10 @@ export async function restoreSnapshot({connectionString,directory,commands={}}) 
     if((await client.query("SELECT to_regclass('pgmq.meta') IS NOT NULL AS present")).rows[0].present
       && (await client.query('SELECT 1 FROM pgmq.meta LIMIT 1')).rowCount) throw new Error('Restore requires an empty database');
     for(const e of manifest.extensions) {
-      await client.query(`CREATE SCHEMA IF NOT EXISTS ${identifier(e.schema)}`);
+      // Built-in schemas (notably pg_catalog for pg_cron) already exist and
+      // PostgreSQL rejects CREATE SCHEMA even with IF NOT EXISTS for these names.
+      const schemaExists=(await client.query('SELECT 1 FROM pg_namespace WHERE nspname=$1',[e.schema])).rowCount;
+      if(!schemaExists) await client.query(`CREATE SCHEMA IF NOT EXISTS ${identifier(e.schema)}`);
       await client.query(`CREATE EXTENSION IF NOT EXISTS ${identifier(e.name)} WITH SCHEMA ${identifier(e.schema)} VERSION ${literal(e.version)}`);
       const installed=(await client.query('SELECT e.extversion AS version,n.nspname AS schema FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname=$1',[e.name])).rows[0];
       if(installed.version!==e.version || installed.schema!==e.schema) throw new Error('Restore extension version or schema mismatch');
@@ -200,7 +208,7 @@ export async function restoreSnapshot({connectionString,directory,commands={}}) 
     const scratch=await mkdtemp(join(directory,'.restore-'));
     try {
       const catalog=join(scratch,'catalog.list'),selected=join(scratch,'selected.list');
-      await command('pg_restore',['--list'],{commands,env,signal,inputFile:join(directory,'domain.dump'),output:catalog});
+      await command('pg_restore',['--list'],{commands,env,signal,inputFile:join(directory,'domain.dump'),output:catalog,allowEarlyInputClose:true});
       if((await stat(catalog)).size>4*1024*1024) throw new Error('Restore catalog exceeds limit');
       const toc=(await readFile(catalog,'utf8')).split('\n').filter(line=>!/^\d+; \d+ \d+ SCHEMA - /.test(line)).join('\n');
       await writeFile(selected,toc,{mode:0o600});

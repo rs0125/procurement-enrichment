@@ -36,13 +36,31 @@ pairs. Backup setup precedes application promotion. Verify effective `User`,
 `Group`, `NoNewPrivileges`, `CapabilityBoundingSet`, `ProtectSystem` and
 `MemoryMax` on both units, then run a backup and isolated restore. No new AWS or
 database key is required. These host changes were deployed on 1 October 2026;
-the first production bundle uploaded successfully. A production-shaped isolated
-restore remains a cutover gate; see the [production record](PRODUCTION_2026-10-01.md).
+the first production bundle uploaded successfully. The production-shaped restore
+and queue round-trip passed after the local restore-helper fixes described in the
+[production record](PRODUCTION_2026-10-01.md); release those fixes before cutover.
 
 ## Isolated recovery
 
 Never restore over production or start consumers during recovery. Use a fresh
-replacement database with matching PostgreSQL and extension versions.
+replacement database with matching PostgreSQL and extension versions. The
+1 October rehearsal uses `supabase/postgres:17.6.1.178` (PostgreSQL 17.6), which
+provides pg_net 0.20.4 as well as the other exact manifest versions. Tag
+`17.6.1.136` has pg_net 0.20.3 and is not compatible with that backup.
+
+Prepare extension prerequisites before restoring: preload `pg_stat_statements`,
+`pg_cron` and `pg_net`, set `cron.database_name` to the target database, and keep
+`cron.launch_active_jobs=off`. Rehearsal containers use `--network=none` and a
+private Unix socket, so even restored functions cannot send external callbacks.
+Do not expose the copied production data on a public database port.
+
+Schema dumps retain RLS policies even with `--no-owner --no-privileges`. They do
+not create cluster roles. The 1 October domain dump references `ramesh_worker`
+and `wog_ro`; create those identities as restricted `NOLOGIN` roles in a clean
+rehearsal target before restoring. Inspect the trusted dump for dependencies
+when rehearsing a newer backup. Do not copy production passwords or grant broad
+access to make recovery succeed. Actual login/membership/ACL recovery is separate
+from verifying this domain-and-queue bundle.
 
 1. Download/extract the bundle into a private directory. Inspect `manifest.json`.
    Export the replacement `BACKUP_DATABASE_URL` securely; use direct/session mode.
