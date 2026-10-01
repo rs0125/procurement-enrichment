@@ -18,13 +18,23 @@ export async function memoryAvailable({ read = readFile } = {}) {
   return available;
 }
 
-export function createExecutor({ available = memoryAvailable, rss = () => process.memoryUsage().rss } = {}) {
-  let active = false;
+export function createExecutor({ available = memoryAvailable, rss = () => process.memoryUsage().rss,
+  onMemoryLimit = () => {} } = {}) {
+  let active = false, recycling = false;
   return async work => {
     if (active) return { status: 'DEFERRED', reason: 'worker_busy' };
+    if (recycling) return { status: 'DEFERRED', reason: 'memory_pressure' };
     active = true;
     try {
-      if (await available() < 384 * MiB || rss() > 384 * MiB) return { status: 'DEFERRED', reason: 'memory_pressure' };
+      // Native image allocations can keep RSS high even after the action ends.
+      // Stop admitting work and let the supervised process drain and restart.
+      // Host/cgroup pressure alone must not cause a restart loop.
+      if (rss() > 384 * MiB) {
+        recycling = true;
+        onMemoryLimit();
+        return { status: 'DEFERRED', reason: 'memory_pressure' };
+      }
+      if (await available() < 384 * MiB) return { status: 'DEFERRED', reason: 'memory_pressure' };
       return await work();
     } finally { active = false; }
   };

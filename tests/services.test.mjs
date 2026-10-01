@@ -119,3 +119,26 @@ test('executor honors low memory and cgroup limits',async()=>{
   const values={'/proc/meminfo':'MemAvailable: 99999999 kB','/proc/self/cgroup':'0::/\n','/sys/fs/cgroup/memory.max':'536870912','/sys/fs/cgroup/memory.current':'400000000'};
   assert.equal(await memoryAvailable({read:async name=>values[name]}),136870912);
 });
+test('executor recycles once at its RSS limit and never admits another action',async()=>{
+  let restarts=0, ownRss=390*1024**2;
+  const execute=createExecutor({available:async()=>100*1024**2,rss:()=>ownRss,onMemoryLimit:()=>{restarts++;}});
+  assert.equal((await execute(()=>assert.fail('work admitted over RSS limit'))).reason,'memory_pressure');
+  ownRss=100*1024**2;
+  assert.equal((await execute(()=>assert.fail('work admitted while draining'))).reason,'memory_pressure');
+  assert.equal(restarts,1);
+});
+test('executor recovers from external pressure without recycling and leaves active work alone',async()=>{
+  let available=200*1024**2, ownRss=100*1024**2, restarts=0, release;
+  const execute=createExecutor({available:async()=>available,rss:()=>ownRss,onMemoryLimit:()=>{restarts++;}});
+  assert.equal((await execute(()=>assert.fail('work admitted during external pressure'))).reason,'memory_pressure');
+  assert.equal(restarts,0);
+  available=1024**3;
+  const first=execute(()=>new Promise(resolve=>{release=resolve;}));
+  await new Promise(resolve=>setImmediate(resolve));
+  ownRss=390*1024**2;
+  assert.equal((await execute(()=>assert.fail('overlapping work admitted'))).reason,'worker_busy');
+  assert.equal(restarts,0);
+  release({status:'READY'});assert.equal((await first).status,'READY');
+  assert.equal((await execute(()=>assert.fail('work admitted before recycling'))).reason,'memory_pressure');
+  assert.equal(restarts,1);
+});

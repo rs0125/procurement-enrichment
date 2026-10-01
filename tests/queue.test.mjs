@@ -57,6 +57,14 @@ test('memory admission and busy executor defer before touching the queue',async(
   assert.equal((await consumer.tick()).reason,'memory_pressure');
   assert.deepEqual(f.calls,[]);assert.equal(providers,0);
 });
+test('RSS recovery stops before claiming a queue receipt or consuming an attempt',async()=>{
+  const f=fixture();let restarts=0;
+  const consumer=createQueueConsumer({...f,settings:worker,dispatch:()=>assert.fail('provider called'),
+    execute:createExecutor({available:async()=>1024**3,rss:()=>390*1024**2,onMemoryLimit:()=>{restarts++;}})});
+  assert.equal((await consumer.tick()).reason,'memory_pressure');
+  assert.equal((await consumer.tick()).reason,'memory_pressure');
+  assert.deepEqual(f.calls,[]);assert.equal(restarts,1);
+});
 
 test('consumer admits once, never overlaps or prefetches, and atomically sends dependents',async()=>{
   const f=fixture([event('1'),event('2')]);let release;

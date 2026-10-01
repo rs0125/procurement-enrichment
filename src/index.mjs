@@ -1,7 +1,7 @@
 import { env } from './config/env.mjs';
 import { disconnect } from './config/prisma.mjs';
 import { buildApp } from './app.mjs';
-import { enrichments,cronJobs,queueRuntime } from './routes/index.mjs';
+import { enrichments,cronJobs,queueRuntime,onMemoryLimit } from './routes/index.mjs';
 let server,stopping;
 async function shutdown(code=0) {
   if(stopping) return stopping;
@@ -16,6 +16,7 @@ async function shutdown(code=0) {
   return stopping;
 }
 queueRuntime.onFailure(()=>{console.error('Queue worker lost ownership');void shutdown(1);});
+onMemoryLimit(()=>{console.error('Worker memory limit reached; draining for supervised restart');void shutdown(1);});
 process.on('SIGTERM',()=>void shutdown());
 process.on('SIGINT',()=>void shutdown());
 try {

@@ -13,7 +13,10 @@ import { QueueRepository } from '../models/queue/repository.mjs';
 import { queueSettings } from '../lib/queue/settings.mjs';
 import { createQueueRuntime } from '../services/queue/runtime.mjs';
 import { createDeliveryServices } from '../services/queue/deliveryServices.mjs';
-const settings=queueSettings(process.env), queue=new QueueRepository(pool), executor=createExecutor();
+let memoryLimitHandler=()=>{};
+export function onMemoryLimit(handler) { memoryLimitHandler=handler; }
+const settings=queueSettings(process.env), queue=new QueueRepository(pool),
+  executor=createExecutor({onMemoryLimit:()=>memoryLimitHandler()});
 const actions=createEnrichmentServices({prisma,executor});
 export const enrichments=createDeliveryServices({services:actions,queue,settings});
 export const cronJobs=createCronJobs({prisma,services:enrichments,settings,queue});

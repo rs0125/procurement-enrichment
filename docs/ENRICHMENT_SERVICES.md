@@ -68,6 +68,11 @@ the HTTP status. Paid model calls that time out still consume a stage attempt.
   and a 30-second deadline. Compression downloads are capped at 20 MiB and
   streamed to disk. Website assessment uses bounded in-memory source bytes
   for hashing and metadata inspection.
+- If the idle worker's own RSS exceeds 384 MiB, it stops admission, drains
+  requests and jobs, and exits with failure so systemd restarts it. This keeps
+  retained native memory from indefinitely deferring every action. Low host or
+  cgroup headroom alone defers work without recycling the process. Active work
+  completes before the next admission check; the existing hard limits remain.
 - `ENRICHER_TEMP_DIR` defaults to `/var/tmp/warehouse-enricher` locally.
   Production systemd sets `/var/lib/warehouse-enricher/buffers`, owned by the
   runtime account. The service rejects RAM-backed compression buffers and
