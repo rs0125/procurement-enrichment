@@ -1,6 +1,8 @@
 # Queue migration: implementation, verification and rollout
 
-Status: **implementation local; production rollout pending, 30 September 2026**. This document does not authorize or
+Status, 1 October 2026: **application deployed in cron mode; queue capture and
+consumption remain disabled**. See the [production record](PRODUCTION_2026-10-01.md)
+for completed deployment checks and the remaining gates. This document does not authorize or
 perform production schema/trigger changes. Implement the
 [architecture](QUEUE_ARCHITECTURE.md) and [delivery contract](QUEUE_CONTRACT.md)
 in small reviewed steps, retaining working cron delivery until its replacement

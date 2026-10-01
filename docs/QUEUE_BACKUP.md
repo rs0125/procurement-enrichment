@@ -35,7 +35,9 @@ application release has no queue backup modules, and rejects incomplete module
 pairs. Backup setup precedes application promotion. Verify effective `User`,
 `Group`, `NoNewPrivileges`, `CapabilityBoundingSet`, `ProtectSystem` and
 `MemoryMax` on both units, then run a backup and isolated restore. No new AWS or
-database key is required. These host changes remain undeployed locally.
+database key is required. These host changes were deployed on 1 October 2026;
+the first production bundle uploaded successfully. A production-shaped isolated
+restore remains a cutover gate; see the [production record](PRODUCTION_2026-10-01.md).
 
 ## Isolated recovery
 
