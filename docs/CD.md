@@ -67,8 +67,12 @@ release/configuration directories or read user homes. Systemd provides their
 writable state directory; temporary files are private. Both units have an empty
 capability set, and deployment verifies the effective isolation before accepting
 a release. The canary retains its 384 MiB cap. The previous image buffer path is
-left untouched so rollback remains possible. Backup services remain root-run
-with their existing configuration and permissions.
+left untouched so rollback remains possible. The local queue update moves the
+backup and failure logger to `warehouse-enricher-backup`, with no capabilities
+and a 384 MiB hard memory cap. The separately installed privileged helper owns
+and verifies this policy before installing backup code. Older application
+releases retain the queue-capable helper; see [queue backups](QUEUE_BACKUP.md).
+This backup isolation change still requires installation and verification on EC2.
 
 Changes to the installed deployment helper require administrative installation
 before pushing a release that depends on them. Application pushes do not replace
@@ -78,7 +82,8 @@ errors remain in the root-only host log.
 
 The application has a 768 MiB systemd memory limit, a 640 MiB soft limit, and a
 256 MiB Node heap. Enrichment and WebP crons are described in `CRON_MIGRATION.md`;
-queueing remains deferred until these schedules are stable.
+production stays in cron mode until the [queue rollout gates](QUEUE_ROLLOUT.md)
+pass. The canary explicitly uses the API-only role and cannot consume jobs.
 Geocoding remains at **02:57 IST** and the backup timer remains at **04:00 IST**.
 
 ## Deployment control files
@@ -88,7 +93,8 @@ fixed SSM document. The trust subject uses this repository's immutable owner
 and repository IDs and the `production` environment. Repository or environment
 renames require updating that exact trust condition.
 
-The installed helper matches `deploy/ec2-release.py`. Changes to that privileged
+The repository helper is `deploy/ec2-release.py`; local queue changes have not
+yet updated the installed copy. Changes to that privileged
 helper require a reviewed administrative installation; application releases do
 not replace it automatically. The SSM document pins the fixed helper path and
 accepts only a 40-character lowercase commit SHA. Agent permissions were added

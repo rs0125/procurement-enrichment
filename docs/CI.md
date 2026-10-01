@@ -11,6 +11,10 @@ The job installs dependencies from the lockfile, validates the Prisma schema,
 generates the Prisma client, checks CLI service registration, and runs all
 unit, HTTP, native image encoder and database integration tests. The test
 database URL is supplied explicitly so the database tests run in CI.
+Queue tests use a second database, `enricher_queue_test`, and the project-supported
+PGMQ 1.5.1 extension. The fixture installer downloads a pinned upstream SQL file
+and verifies its SHA-256. Both databases are isolated from production. See
+[queue fixture setup](QUEUE_SETUP.md#reproduce-the-database-tests) for local commands.
 Python tests also check deployment input validation, the nightly-job window,
 rollback, and suppression of private SSM command output.
 
@@ -43,3 +47,16 @@ After the manual deployment was verified, `.github/workflows/deploy.yml` was
 enabled for successful same-repository CI runs on `main`. Pull request runs do
 not deploy. CD uses OIDC and a fixed SSM command; see [EC2 deployment](CD.md).
 The former SSH-pull workflow remains archived at `deploy/legacy-deploy.yml.example`.
+
+## Queue integration coverage
+
+CI also runs seven real action adapters with stubbed providers, source/receipt
+races, paged fan-out, runtime role/leadership checks and a streamed backup/restore
+round trip. Backup client tools run inside the PostGIS service container; its two
+extra fixture databases are guarded and dropped after testing. The queue fixture
+is separate from the existing domain tests. Use locked Prisma 7.10.0 dependencies.
+
+The adversarial regressions also cover independent explicit requests during an
+in-flight job, geocode dependency cooldowns, coordinate jitter, mid-refresh
+visibility expiry, worker session termination, cancellation of a SIGTERM-ignoring
+backup child, incomplete restore manifests and backup deployment isolation.

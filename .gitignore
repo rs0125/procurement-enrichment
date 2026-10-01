@@ -7,7 +7,10 @@ node_modules
 src/generated/prisma
 
 # Local SQL drafts (contain endpoint URLs + bearer secret)
-/sql
+/sql/*
+!/sql/queue/
+/sql/queue/*
+!/sql/queue/*.sql
 
 # Local warehouse exports and one-off diagnostic scripts
 /output/

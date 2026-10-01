@@ -8,6 +8,7 @@
     "start": "node --experimental-strip-types src/index.mjs",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "enrich": "node --experimental-strip-types scripts/enrich.mjs",
+    "queue": "node scripts/queue.mjs",
     "generate": "prisma generate"
   },
   "keywords": [],

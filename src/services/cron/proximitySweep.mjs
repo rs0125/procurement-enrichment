@@ -16,6 +16,10 @@ export async function sweepProximity({ model, services, runLog, signal, limit = 
   const result = { status: 'SUCCESS', processed: 0, ready: 0, failed: 0, deferred: 0, skippedCategories };
   for (const warehouse of rows) {
     if (signal.aborted) { result.deferred += rows.length - result.processed; break; }
+    if(services.deliveryMode==='queue') {
+      const item=await invoke(services,'proximity',{warehouseId:warehouse.id},signal);
+      result.processed++;result.queued=(result.queued??0)+(item.status==='QUEUED'?1:0);continue;
+    }
     const jobName = `warehouse_proximity:${warehouse.id}`;
     const prior = await runLog.recent(jobName);
     const previousAttempts = prior?.status === 'FAILED' && prior.metadata?.lat === warehouse.lat && prior.metadata?.lng === warehouse.lng

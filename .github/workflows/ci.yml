@@ -38,6 +38,9 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:enricher-ci-test@127.0.0.1:5432/enricher_test
       ENRICHER_TEST_DATABASE_URL: postgresql://postgres:enricher-ci-test@127.0.0.1:5432/enricher_test
+      ENRICHER_QUEUE_TEST_DATABASE_URL: postgresql://postgres:enricher-ci-test@127.0.0.1:5432/enricher_queue_test
+      ENRICHER_BACKUP_TEST_DATABASE_URL: postgresql://postgres:enricher-ci-test@127.0.0.1:5432/enricher_test
+      ENRICHER_TEST_ENGINE: docker
       CRON_SECRET: ci-only-test-secret
       NODE_ENV: test
 
@@ -65,7 +68,16 @@ jobs:
       - name: Verify CLI and service registration
         run: npm run enrich -- list
 
+      - name: Install pinned PGMQ fixture and isolated queue database
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          python3 tests/fixtures/install-pgmq.py --engine docker --container "$POSTGRES_CONTAINER"
+          docker exec "$POSTGRES_CONTAINER" createdb -U postgres enricher_queue_test
+
       - name: Run unit, HTTP, encoder and database tests
+        env:
+          ENRICHER_TEST_CONTAINER: ${{ job.services.postgres.id }}
         run: npm test
 
       - name: Verify deployment guards and rollback

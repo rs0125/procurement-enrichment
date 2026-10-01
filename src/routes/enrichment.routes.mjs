@@ -13,7 +13,7 @@ export function enrichmentRoutes({services,authorize}) {
         return res.status(400).json({error:'invalid_enrichment_input'});
       }
       const result=await services.run(req.params.service,{...req.body,signal:controller.signal});
-      if(!controller.signal.aborted) res.json(result);
+      if(!controller.signal.aborted) res.status(result.status==='QUEUED'?202:200).json(result);
     } catch(error) {
       if(!controller.signal.aborted) res.status([400,404,503].includes(error.statusCode)?error.statusCode:500)
         .json({error:error.statusCode===400?'invalid_enrichment_input':error.statusCode===404?'unknown_enrichment_service':error.statusCode===503?'service_not_configured':'enrichment_failed'});

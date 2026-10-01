@@ -9,10 +9,17 @@ OnFailure=warehouse-geocoder-backup-failure.service
 Type=oneshot
 EnvironmentFile=/etc/warehouse-geocoder.env
 ExecStart=/usr/local/sbin/warehouse-geocoder-backup
-User=root
+User=warehouse-enricher-backup
+Group=warehouse-enricher-backup
+CapabilityBoundingSet=
+AmbientCapabilities=
+MemoryHigh=256M
+MemoryMax=384M
+TasksMax=64
+UMask=0077
 # pg_dump + upload can run for several minutes on a non-trivial DB.
 TimeoutStartSec=30min
-# Modest hardening — script writes to /var/backups and reads /etc env file.
+# systemd reads the root-owned environment file before dropping privileges.
 ProtectSystem=strict
 ReadWritePaths=/var/backups/warehouse-geocoder
 ProtectHome=true

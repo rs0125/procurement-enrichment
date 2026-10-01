@@ -51,6 +51,7 @@ class DeploymentTests(unittest.TestCase):
             self.assertIn('StateDirectory=warehouse-enricher', contents[0])
             self.assertIn('MemoryMax=384M', contents[0])
             self.assertIn('MemoryHigh=320M', contents[0])
+            self.assertIn('PORT=3001 ENRICHMENT_PROCESS_ROLE=api', contents[0])
             self.assertFalse(unit.exists())
 
     def test_rollback_waits_for_the_previous_process_to_start(self):
@@ -112,6 +113,86 @@ class DeploymentTests(unittest.TestCase):
     def test_isolated_build_requires_a_working_directory(self):
         with self.assertRaises(deploy.DeploymentError):
             deploy.run(['npm','ci'], app_user=True)
+
+    def test_backup_installation_requires_verified_nonroot_units_before_copying_code(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'release/deploy/backup'; source.mkdir(parents=True)
+            for name in ['run.mjs', 'snapshot.mjs', 'backup.sh']:
+                (source / name).write_text('fixture')
+            calls = []
+            def run(args):
+                calls.append(args)
+                return 'inactive' if 'ActiveState' in ' '.join(args) else ''
+            def verify(unit):
+                contents = (root / 'units' / (unit + '.d') / 'enricher-backup.conf').read_text()
+                for expected in ['User=warehouse-enricher-backup', 'Group=warehouse-enricher-backup',
+                                 'NoNewPrivileges=true', 'CapabilityBoundingSet=\n', 'MemoryMax=384M',
+                                 'ReadWritePaths=\n', 'ExecStart=/usr/bin/env BACKUP_DIR=']:
+                    self.assertIn(expected, contents)
+                self.assertFalse(any(command[0] == 'install' for command in calls))
+            with patch.multiple(deploy, BACKUP_BASE=root/'helpers', BACKUP_DIRECTORY=root/'data', SYSTEM_UNITS=root/'units'), patch.object(deploy, 'run', side_effect=run), patch.object(deploy, 'verify_backup', side_effect=verify) as check:
+                deploy.install_backup(root/'release')
+            self.assertEqual(check.call_count, 2)
+            self.assertTrue(any(command[0] == 'install' for command in calls))
+
+    def test_backup_installation_refuses_an_active_backup_or_incomplete_release(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'release/deploy/backup'; source.mkdir(parents=True)
+            (source/'run.mjs').write_text('fixture')
+            with patch.object(deploy, 'run') as run:
+                with self.assertRaisesRegex(deploy.DeploymentError, 'Incomplete'):
+                    deploy.install_backup(root/'release')
+                run.assert_not_called()
+            (source/'snapshot.mjs').write_text('fixture')
+            (source/'backup.sh').write_text('fixture')
+            with patch.object(deploy, 'run', return_value='activating') as run, patch.object(deploy, 'replace_text') as replace:
+                with self.assertRaisesRegex(deploy.DeploymentError, 'is active'):
+                    deploy.install_backup(root/'release')
+                self.assertEqual(run.call_count, 1)
+                replace.assert_not_called()
+
+    def test_older_application_keeps_the_installed_queue_backup(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            installed = root / 'helpers'; installed.mkdir()
+            for name in ['run.mjs','snapshot.mjs']:
+                (installed/name).write_text('queue format')
+            with patch.object(deploy, 'BACKUP_BASE', installed), patch.object(deploy, 'run') as run:
+                deploy.install_backup(root/'older-release')
+                run.assert_not_called()
+            for name in ['run.mjs','snapshot.mjs']:
+                self.assertEqual((installed/name).read_text(), 'queue format')
+
+    def test_backup_installation_rejects_release_symlinks_to_host_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / 'release/deploy/backup'; source.mkdir(parents=True)
+            (root/'private-host-file').write_text('fixture private data')
+            (source/'snapshot.mjs').write_text('fixture')
+            (source/'backup.sh').write_text('fixture')
+            (source/'run.mjs').symlink_to(root/'private-host-file')
+            with patch.object(deploy, 'run') as run:
+                with self.assertRaisesRegex(deploy.DeploymentError, 'regular files inside the release'):
+                    deploy.install_backup(root/'release')
+                run.assert_not_called()
+            (source/'run.mjs').unlink()
+            (source/'run.mjs').write_text('fixture')
+            source.rename(root/'external-sources')
+            source.symlink_to(root/'external-sources', target_is_directory=True)
+            with patch.object(deploy, 'run') as run:
+                with self.assertRaisesRegex(deploy.DeploymentError, 'regular files inside the release'):
+                    deploy.install_backup(root/'release')
+                run.assert_not_called()
+
+    def test_backup_verification_rejects_root_or_missing_memory_isolation(self):
+        good = 'User=warehouse-enricher-backup\nGroup=warehouse-enricher-backup\nNoNewPrivileges=yes\nCapabilityBoundingSet=\nProtectSystem=strict\nMemoryMax=402653184'
+        with patch.object(deploy, 'run', return_value=good):
+            deploy.verify_backup('fixture.service')
+        for bad in [good.replace('User=warehouse-enricher-backup','User=root'), good.replace('402653184','infinity')]:
+            with patch.object(deploy, 'run', return_value=bad), self.assertRaises(deploy.DeploymentError):
+                deploy.verify_backup('fixture.service')
 
 
 if __name__ == '__main__':

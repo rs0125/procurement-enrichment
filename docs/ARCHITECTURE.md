@@ -321,12 +321,22 @@ Queues are not deployed. The current agreement is to observe at least two full
 nightly cycles, with real provider/compression work and understood retries,
 before changing delivery. The existing action interfaces are the reusable part.
 
-A future queue should deliver IDs and requested stages after source changes,
-retain a recovery/reconciliation sweep, and run bounded consumers through the
-same service registry. Delivery retries, source-version checks, dead-letter
-handling and visibility into stuck work need explicit design. Reliable producer
-handoff may use an outbox; neither that mechanism nor a queue provider has been
-selected here. An in-memory queue would not provide durable delivery.
+The [queue architecture proposal](QUEUE_ARCHITECTURE.md) recommends one durable
+PGMQ queue with transactional enqueueing, narrow source
+triggers and one bounded consumer in this EC2 service. Existing actions and
+reconciliation are retained. This is a proposed direction, not a deployed change
+or a claim that the stability gate has passed.
+
+The [PGMQ evaluation](PGMQ_EVALUATION.md) records local tests and the extension
+version, stale-acknowledgement and backup findings. The
+[integration/setup guide](QUEUE_SETUP.md) records the implemented action adapters,
+worker lifecycle, atomic approval and consistent backup, plus the deployment
+and observation gates still required before activation. The
+[delivery contract](QUEUE_CONTRACT.md) covers ID messages, receipt ownership,
+retry policy and stale-result fencing. The
+[rollout plan](QUEUE_ROLLOUT.md) covers shared eligibility, staged-promotion
+atomicity, API-only deployment canaries, private-schema backup, shadow delivery,
+restricted execution, verification and rollback.
 
 Changing scheduling must preserve the existing originals, shared-image
 membership rules, separate classification/approval decisions, consumer fallbacks,
@@ -337,6 +347,8 @@ provider calls.
 
 - [README and local setup](../README.md)
 - [Actions, CLI and tests](ENRICHMENT_SERVICES.md)
+- [Proposed queue architecture](QUEUE_ARCHITECTURE.md), [work contract](QUEUE_CONTRACT.md), [rollout](QUEUE_ROLLOUT.md)
+- [PGMQ evaluation and test findings](PGMQ_EVALUATION.md)
 - [Scheduled work and stability gate](CRON_MIGRATION.md)
 - [HTTP contracts](HTTP_API.md)
 - [CI](CI.md), [release deployment and rollback](CD.md)

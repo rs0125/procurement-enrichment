@@ -30,6 +30,11 @@ UNIT = 'warehouse-geocoder.service'
 SERVICES = {'geocode', 'proximity', 'image-label', 'document-kind', 'website-approval', 'webp', 'jpeg'}
 RUNTIME_USER = 'warehouse-enricher'
 BUILD_USER = 'warehouse-enricher-build'
+BACKUP_USER = 'warehouse-enricher-backup'
+BACKUP_BASE = Path('/usr/local/lib/warehouse-enricher-backup')
+BACKUP_DIRECTORY = Path('/var/backups/warehouse-geocoder')
+BACKUP_UNITS = ['warehouse-geocoder-backup.service', 'warehouse-geocoder-backup-failure.service']
+SYSTEM_UNITS = Path('/etc/systemd/system')
 STATE = '/var/lib/warehouse-enricher'
 PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
 
@@ -84,7 +89,7 @@ def run(args, *, cwd=None, app_user=False, timeout=600):
 
 
 def ensure_accounts():
-    for name in [RUNTIME_USER, BUILD_USER]:
+    for name in [RUNTIME_USER, BUILD_USER, BACKUP_USER]:
         try:
             account = pwd.getpwnam(name)
         except KeyError:
@@ -236,7 +241,7 @@ Type=simple
 EnvironmentFile=/etc/warehouse-geocoder.env
 EnvironmentFile=-/etc/warehouse-enricher.env
 Environment=MALLOC_ARENA_MAX=2
-ExecStart=/usr/bin/env PORT=3001 /usr/bin/node --max-old-space-size=256 --experimental-strip-types src/index.mjs
+ExecStart=/usr/bin/env PORT=3001 ENRICHMENT_PROCESS_ROLE=api /usr/bin/node --max-old-space-size=256 --experimental-strip-types src/index.mjs
 MemoryHigh=320M
 MemoryMax=384M
 TasksMax=96
@@ -295,6 +300,83 @@ TimeoutStopSec=35
     point(PREVIOUS, previous)
 
 
+def verify_backup(unit):
+    properties = dict(line.split('=', 1) for line in run(['systemctl', 'show', unit,
+        '--property=User', '--property=Group', '--property=NoNewPrivileges',
+        '--property=CapabilityBoundingSet', '--property=ProtectSystem', '--property=MemoryMax']).splitlines())
+    if properties != {'User': BACKUP_USER, 'Group': BACKUP_USER, 'NoNewPrivileges': 'yes',
+                      'CapabilityBoundingSet': '', 'ProtectSystem': 'strict', 'MemoryMax': str(384 * 1024**2)}:
+        raise DeploymentError('Backup privilege isolation did not become active')
+
+
+def install_backup(release):
+    sources = [release / 'deploy/backup' / name for name in ['snapshot.mjs', 'run.mjs']]
+    present = [path.is_file() for path in sources]
+    if any(present) and not all(present):
+        raise DeploymentError('Incomplete queue backup helper in release')
+    installed = all((BACKUP_BASE / path.name).is_file() for path in sources)
+    if not any(present):
+        # Old application releases must not downgrade the queue backup format.
+        if installed:
+            print('Retaining installed queue backup helper for older application release', flush=True)
+        return
+    for path in [*sources, release / 'deploy/backup/backup.sh']:
+        # A build-controlled symlink must never make this root helper copy a
+        # private host file into a world-readable application module.
+        if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(release.resolve()):
+            raise DeploymentError('Backup sources must be regular files inside the release')
+    for unit in BACKUP_UNITS:
+        state = run(['systemctl', 'show', unit, '--property=ActiveState', '--value'])
+        if state not in ['inactive', 'failed']:
+            raise DeploymentError('Backup or failure logger is active; retry deployment after it finishes')
+    if BACKUP_DIRECTORY.is_symlink() or BACKUP_BASE.is_symlink():
+        raise DeploymentError('Backup installation paths must not be symlinks')
+    BACKUP_DIRECTORY.mkdir(mode=0o700, parents=True, exist_ok=True)
+    run(['chown', '-hR', f'{BACKUP_USER}:{BACKUP_USER}', str(BACKUP_DIRECTORY)])
+    BACKUP_DIRECTORY.chmod(0o700)
+    # Security policy is part of this separately installed privileged helper.
+    # Never let a Git revision select the user or security policy of a root unit.
+    for unit in BACKUP_UNITS:
+        command = '/usr/local/sbin/warehouse-geocoder-backup' if unit == BACKUP_UNITS[0] else (
+            f'/usr/bin/node --max-old-space-size=128 {BACKUP_BASE}/run.mjs --failure')
+        replace_text(SYSTEM_UNITS / (unit + '.d') / 'enricher-backup.conf', f'''[Service]
+User={BACKUP_USER}
+Group={BACKUP_USER}
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+ReadWritePaths=
+ReadWritePaths={BACKUP_DIRECTORY}
+MemoryHigh=256M
+MemoryMax=384M
+TasksMax=64
+ExecStart=
+ExecStart=/usr/bin/env BACKUP_DIR={BACKUP_DIRECTORY} {command}
+''')
+    run(['systemctl', 'daemon-reload'])
+    for unit in BACKUP_UNITS:
+        verify_backup(unit)
+    # Only now may repository-provided JS replace the backup helper. A timer
+    # firing during an update can never execute these modules as root.
+    run(['install', '-d', '-m', '0755', str(BACKUP_BASE)])
+    for path in sources:
+        run(['install', '-m', '0644', str(path), str(BACKUP_BASE / path.name)])
+    run(['ln', '-sfn', str(CURRENT / 'node_modules'), str(BACKUP_BASE / 'node_modules')])
+    run(['install', '-m', '0755', str(release / 'deploy/backup/backup.sh'), '/usr/local/sbin/warehouse-geocoder-backup'])
+
+
 def deploy(revision):
     if not valid_revision(revision):
         raise DeploymentError('A full lowercase Git commit SHA is required')
@@ -308,11 +390,13 @@ def deploy(revision):
     if CURRENT.exists() and CURRENT.resolve() == release:
         verify(3000)
         verify_runtime(UNIT)
+        install_backup(release)
         print(json.dumps({'status': 'already_current', 'revision': revision, 'service': UNIT}), flush=True)
         return
     print('Checking the new release on localhost:3001', flush=True)
     canary(release)
     print('Promoting the release to the existing geocoder unit', flush=True)
+    install_backup(release)
     promote(release)
     keep = {CURRENT.resolve(), PREVIOUS.resolve()}
     candidates = sorted((p for p in RELEASES.iterdir() if p.is_dir() and not p.is_symlink()

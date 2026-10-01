@@ -1,3 +1,16 @@
+# Database backup
+
+The local queue-aware implementation and recovery procedure are documented in
+[QUEUE_BACKUP.md](../docs/QUEUE_BACKUP.md). Its new format is one consistent
+`.tar` bundle containing the domain dump and PGMQ state. The independent daily
+S3 timer, environment and retention remain. Update the installed release helper
+and verify non-root backup/failure services plus a new backup/restore before
+enabling production queues. The historical bootstrap steps below do not install
+the new account or Node modules; use the updated release helper and queue runbook.
+
+The original specification below describes the earlier standalone `.dump` format;
+use `pg_restore` directly for those old artifacts, not the new bundle restore CLI.
+
 # Daily Supabase → S3 backup — spec
 
 One `pg_dump` of the Supabase database written to S3 every night, kept for 90

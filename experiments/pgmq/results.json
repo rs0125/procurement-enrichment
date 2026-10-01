@@ -1,0 +1,168 @@
+{
+  "date": "2026-09-29",
+  "scope": "Local fixtures and read-only hosted metadata; no production changes",
+  "supabase": {
+    "checkedAt": "2026-09-28T20:36:28.058Z",
+    "server": {
+      "version": "17.6"
+    },
+    "extensions": [
+      {
+        "name": "pg_cron",
+        "default_version": "1.6.4",
+        "installed_version": "1.6.4"
+      },
+      {
+        "name": "pgmq",
+        "default_version": "1.5.1",
+        "installed_version": null
+      }
+    ],
+    "pgmqVersions": [
+      {
+        "name": "pgmq",
+        "version": "1.5.1",
+        "installed": false,
+        "superuser": false,
+        "trusted": false
+      }
+    ],
+    "readOnly": true
+  },
+  "sources": {
+    "1.5.1": {
+      "commit": "7fd411d8ffd53b5313039f59167124c861d46430",
+      "sqlSha256": "65b9302faa660539584769a572b57f2df76ccf1b3a2153c37cefc57b8db633e9"
+    },
+    "1.13.0": {
+      "commit": "32c075bb6dbed66a303d1a792393c93e36c09a97",
+      "sqlSha256": "bf7e66c75ed771df0c5f7cb2b9f0123ca77992daacd56e3911d1894a3efa99de"
+    }
+  },
+  "local": {
+    "postgres": "17.11",
+    "memoryLimitMiB": 512,
+    "cpus": 1,
+    "prefetch": 0
+  },
+  "contractTests": {
+    "1.5.1": {
+      "passed": 16,
+      "failed": 0,
+      "smoke": {
+        "version": "1.5.1",
+        "messages": 1000,
+        "insertMs": 48,
+        "drainMs": 12019,
+        "receiptAndAckP50Ms": 5.95,
+        "receiptAndAckP95Ms": 27.14,
+        "queue_bytes": "253952",
+        "archive_bytes": "237568",
+        "scope": "local SQL only; excludes providers, Supabase network, production workload"
+      }
+    },
+    "1.13.0": {
+      "passed": 16,
+      "failed": 0,
+      "smoke": {
+        "version": "1.13.0",
+        "messages": 1000,
+        "insertMs": 58,
+        "drainMs": 15728,
+        "receiptAndAckP50Ms": 14.46,
+        "receiptAndAckP95Ms": 20.41,
+        "queue_bytes": "253952",
+        "archive_bytes": "245760",
+        "scope": "local SQL only; excludes providers, Supabase network, production workload"
+      }
+    }
+  },
+  "dumpInspection": [
+    {
+      "version": "1.5.1",
+      "mode": "public-only",
+      "queueDDL": false,
+      "pendingData": false,
+      "archiveData": false,
+      "metadataData": false,
+      "bytes": 928
+    },
+    {
+      "version": "1.5.1",
+      "mode": "add-pgmq",
+      "queueDDL": false,
+      "pendingData": false,
+      "archiveData": false,
+      "metadataData": false,
+      "bytes": 1006
+    },
+    {
+      "version": "1.5.1",
+      "mode": "explicit-extension",
+      "queueDDL": false,
+      "pendingData": false,
+      "archiveData": false,
+      "metadataData": false,
+      "bytes": 1086
+    },
+    {
+      "version": "1.5.1",
+      "mode": "explicit-data",
+      "queueDDL": false,
+      "pendingData": false,
+      "archiveData": false,
+      "metadataData": false,
+      "bytes": 724
+    },
+    {
+      "version": "1.13.0",
+      "mode": "public-only",
+      "queueDDL": false,
+      "pendingData": false,
+      "archiveData": false,
+      "metadataData": false,
+      "bytes": 928
+    },
+    {
+      "version": "1.13.0",
+      "mode": "add-pgmq",
+      "queueDDL": true,
+      "pendingData": true,
+      "archiveData": true,
+      "metadataData": true,
+      "bytes": 4263
+    },
+    {
+      "version": "1.13.0",
+      "mode": "explicit-extension",
+      "queueDDL": true,
+      "pendingData": true,
+      "archiveData": true,
+      "metadataData": true,
+      "bytes": 4343
+    },
+    {
+      "version": "1.13.0",
+      "mode": "explicit-data",
+      "queueDDL": false,
+      "pendingData": true,
+      "archiveData": true,
+      "metadataData": true,
+      "bytes": 1731
+    }
+  ],
+  "durabilityAndRestore": [
+    {
+      "version": "1.5.1",
+      "beforeCrashReceipt": 1,
+      "crashRecovery": "PASS: pending and archived data retained; unacked ID redelivered",
+      "explicitFixtureRestore": "PASS: metadata, pending/archive fields, and next ID preserved"
+    },
+    {
+      "version": "1.13.0",
+      "beforeCrashReceipt": 1,
+      "crashRecovery": "PASS: pending and archived data retained; unacked ID redelivered",
+      "extensionAwareDumpRestore": "PASS: metadata, pending/archive fields, and next ID preserved"
+    }
+  ]
+}

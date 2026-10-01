@@ -4,8 +4,15 @@ Description=Log failure of warehouse-geocoder-backup to CronRunLog
 [Service]
 Type=oneshot
 EnvironmentFile=/etc/warehouse-geocoder.env
-ExecStart=/usr/local/sbin/warehouse-geocoder-backup-log-failure
-User=root
+ExecStart=/usr/bin/node --max-old-space-size=128 /usr/local/lib/warehouse-enricher-backup/run.mjs --failure
+User=warehouse-enricher-backup
+Group=warehouse-enricher-backup
+CapabilityBoundingSet=
+AmbientCapabilities=
+MemoryHigh=256M
+MemoryMax=384M
+TasksMax=64
+UMask=0077
 ProtectSystem=strict
 ReadWritePaths=/var/backups/warehouse-geocoder
 ProtectHome=true

@@ -25,9 +25,10 @@ export function createGeocodeRecentSweep({ repository, services, pause = delay, 
         if (item.status === 'DEFERRED') break;
         result.processed++;
         if (item.status === 'READY') result.succeeded++;
+        else if(item.status==='QUEUED') result.queued=(result.queued??0)+1;
         else if (item.status === 'FAILED') result.failed++;
         else result.skipped++;
-        if (result.processed < rows.length) {
+        if (services.deliveryMode!=='queue' && result.processed < rows.length) {
           try { await pause(2000, undefined, { signal }); } catch { break; }
         }
       }

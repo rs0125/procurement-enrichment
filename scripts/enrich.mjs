@@ -1,9 +1,12 @@
 import 'dotenv/config';
-import { prisma,disconnect } from '../src/config/prisma.mjs';
+import { prisma,pool,disconnect } from '../src/config/prisma.mjs';
 import { createEnrichmentServices,SERVICE_INPUTS } from '../src/services/enrichment/index.mjs';
 
+import { QueueRepository } from '../src/models/queue/repository.mjs';
+import { queueSettings } from '../src/lib/queue/settings.mjs';
+import { createDeliveryServices } from '../src/services/queue/deliveryServices.mjs';
 const [name,...args]=process.argv.slice(2);
-const services=createEnrichmentServices({prisma});
+const services=createDeliveryServices({services:createEnrichmentServices({prisma}),queue:new QueueRepository(pool),settings:queueSettings(process.env)});
 const stop=()=>services.stop();
 process.once('SIGINT',stop);process.once('SIGTERM',stop);
 try {

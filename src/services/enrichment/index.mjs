@@ -16,25 +16,44 @@ import { createGeocodeService } from './geocode.mjs';
 import { createProximityService } from './proximity.mjs';
 import { ProximityComputer } from './proximityCompute.mjs';
 
+import { QueueImageRepository, QueueProximityRepository, queueGeocodeRepository } from '../../models/queue/actionRepositories.mjs';
+
 export const SERVICE_INPUTS=Object.freeze({geocode:'warehouseId',proximity:'warehouseId',
   'image-label':'imageId','document-kind':'imageId','website-approval':'imageId',webp:'imageId',jpeg:'imageId'});
 
-export function createEnrichmentServices({prisma,executor=createExecutor()}={}) {
-  const repository=new ImageRepository(prisma), proximity=new ProximityRepository(prisma);
-  const shared={repository,invalidate:cache.invalidateImageCache};
+export function createEnrichmentServices({prisma,executor=createExecutor(),providers={}}={}) {
   let store;
-  const compression={...shared,configured:storageConfigured,getStore:()=>store ??= createStorage()};
-  const handlers={
-    geocode:createGeocodeService({repository:geocodeRepository(prisma),extract:extractCoordinatesFromUrl,warmUp:warmUpSession}),
-    proximity:createProximityService({model:proximity,computer:new ProximityComputer(proximity),
-      expectedRegions:ProximityRepository.expectedRegionsFor(categories.CATEGORIES.map(c=>c.key),120,{hospital:30})}),
-    'image-label':createImageLabelService(shared),
-    'document-kind':createDocumentKindService(shared),
-    'website-approval':createWebsiteApprovalService(shared),
-    webp:createWebpService(compression),jpeg:createJpegService(compression)
-  };
+  const configured=name=>['webp','jpeg'].includes(name) ? (providers.storageConfigured??storageConfigured)()
+    : ['image-label','document-kind','website-approval'].includes(name) ? (providers.imageConfigured??(()=>Boolean(process.env.OPENAI_API_KEY)))()
+    : name==='proximity' ? Boolean(process.env.MAPBOX_ACCESS_TOKEN) : true;
+  function handlersFor(context) {
+    const repository=context?new QueueImageRepository(prisma,context):new ImageRepository(prisma);
+    const proximity=context?new QueueProximityRepository(prisma,context):new ProximityRepository(prisma);
+    const shared={repository,invalidate:providers.invalidate??cache.invalidateImageCache};
+    const compression={...shared,configured:()=>configured('webp'),getStore:providers.getStore??(()=>store??=createStorage()),
+      ...Object.fromEntries(['download','decode','temporary'].filter(k=>providers[k]).map(k=>[k,providers[k]]))};
+    return {
+      geocode:createGeocodeService({repository:context?queueGeocodeRepository(prisma,context):geocodeRepository(prisma),
+        extract:providers.extract??extractCoordinatesFromUrl,warmUp:providers.warmUp??warmUpSession}),
+      proximity:createProximityService({model:proximity,computer:providers.computer??new ProximityComputer(proximity),
+        expectedRegions:providers.expectedRegions??ProximityRepository.expectedRegionsFor(categories.CATEGORIES.map(c=>c.key),120,{hospital:30})}),
+      'image-label':createImageLabelService({...shared,configured:()=>configured('image-label'),classify:providers.classify}),
+      'document-kind':createDocumentKindService({...shared,configured:()=>configured('document-kind'),classify:providers.classifyDocument}),
+      'website-approval':createWebsiteApprovalService({...shared,configured:()=>configured('website-approval'),assess:providers.assess}),
+      webp:createWebpService(compression),jpeg:createJpegService({...compression,...(context?{publish:repository.publishJpeg.bind(repository)}:{})})
+    };
+  }
+  const handlers=handlersFor();
   const shutdown=new AbortController();
   return {
+    configured,
+    async runQueued(name,input,context) {
+      if(!Object.hasOwn(SERVICE_INPUTS,name) || !context?.owner || context.action!==name) throw new Error('Queue context required');
+      positiveId(input[SERVICE_INPUTS[name]]);
+      context.signal=AbortSignal.any([shutdown.signal,context.signal]);
+      context.signal.throwIfAborted();
+      return handlersFor(context)[name]({...input,signal:context.signal});
+    },
     list:()=>Object.entries(SERVICE_INPUTS).map(([name,input])=>({name,input})),
     stop:()=>shutdown.abort(),
     async run(name,input={}) {

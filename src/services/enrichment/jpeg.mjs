@@ -9,7 +9,7 @@ export function createJpegService(deps) {
     if(!row) return {status:'SKIPPED',reason:'image_not_referenced',imageId};
     if(dryRun) return {status:'DRY_RUN',imageId,stage:'jpeg',currentStatus:row.jpegStatus,configured:deps.configured()};
     if(jpeg.complete(row)) return {status:'SKIPPED',reason:'already_ready',imageId};
-    if(!row.classification || row.labelStatus!=='READY') return {status:'DEFERRED',reason:'label_required',imageId};
+    if(!row.classification) return {status:'DEFERRED',reason:'label_required',imageId};
     if(!deps.configured()) {const error=new Error('Service configuration missing');error.statusCode=503;throw error;}
     signal?.throwIfAborted();
     const store=deps.getStore();

@@ -3,7 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 export async function invoke(services, name, input, signal) {
   while (true) {
     signal.throwIfAborted();
-    const result = await services.run(name, { ...input, signal });
+    const result = await (services.reconcile ?? services.run).call(services, name, { ...input, signal });
     if (result.reason !== 'worker_busy') return result;
     await delay(250, undefined, { signal });
   }
@@ -23,6 +23,7 @@ export async function sweepImages({ repository, services, stage, service, limit,
       item = { status: 'FAILED' };
     }
     result.processed++;
+    if (item.status === 'QUEUED') result.queued=(result.queued??0)+1;
     if (item.status === 'READY') result.ready++;
     if (item.status === 'FAILED') result.failed++;
     if (item.status === 'UNSUPPORTED') result.unsupported++;

@@ -8,10 +8,20 @@ Original media is retained; consumers select appropriate variants and fallbacks.
 Start with **[Service architecture and enterprise context](docs/ARCHITECTURE.md)**
 for ownership, integrations, data flows, schedules and the future queue boundary.
 
+The proposed queue migration is documented in
+[Queue architecture](docs/QUEUE_ARCHITECTURE.md),
+[work and delivery contract](docs/QUEUE_CONTRACT.md), and
+[rollout and verification](docs/QUEUE_ROLLOUT.md). The
+[local PGMQ evaluation](docs/PGMQ_EVALUATION.md) now recommends Supabase Queues
+with our existing action guards. The [queue integration and setup runbook](docs/QUEUE_SETUP.md) covers the seven
+guarded action adapters, worker lifecycle, paged registration, atomic dashboard
+approval, and consistent backups. These changes are local; production still uses
+the crons below. Production SQL, deployment, shadow observation and cutover remain.
+
 The production EC2 display name is `warehouse-enricher`; the retained systemd
 unit is `warehouse-geocoder.service`. The original geocoder now uses the same
 bounded action layer as image/proximity enrichment. A separate systemd timer
-on this host runs the database backup. There is no durable queue yet.
+on this host runs the database backup. Queue consumption is disabled by default.
 
 ## Actions and schedules
 
@@ -86,6 +96,7 @@ during the geocoder/backup window, 21:15–22:45 UTC.
 | `src/models/` | Database repositories, claims and guarded publication |
 | `src/lib/` | Provider clients, image/proximity policy and runtime bounds |
 | `scripts/enrich.mjs` | Action CLI |
+| `scripts/queue.mjs`, `sql/queue/` | Local queue diagnostics/preview and separately applied setup |
 | `scripts/geocode-all.mjs` | Separate legacy bulk geocoding tool |
 | `prisma/schema.prisma` | Shared schema, including tables owned by other services |
 | `tests/` | Application, database, native encoder and deployment checks |
@@ -96,6 +107,12 @@ during the geocoder/backup window, 21:15–22:45 UTC.
 | Document | Use it for |
 |---|---|
 | [Architecture and enterprise context](docs/ARCHITECTURE.md) | Responsibilities, relationships, data ownership and end-to-end flows |
+| [Queue architecture](docs/QUEUE_ARCHITECTURE.md) | Proposed PGMQ delivery, dependencies, producer boundary and EC2 resource model |
+| [PGMQ evaluation](docs/PGMQ_EVALUATION.md) | Version checks, local fault tests, acknowledgement and backup requirements |
+| [Queue integration and setup](docs/QUEUE_SETUP.md) | Integrated actions, modes, SQL setup, existing credentials and deployment gates |
+| [Queue contract](docs/QUEUE_CONTRACT.md) | Proposed work identity, claims, retries, source fencing and failure recovery |
+| [Queue rollout](docs/QUEUE_ROLLOUT.md) | Implementation phases, canary/backup changes, acceptance tests and rollback |
+| [Queue adversarial review](docs/QUEUE_ADVERSARIAL_REVIEW.md) | Reproduced faults, local fixes, tests and remaining rollout gates |
 | [Enrichment services](docs/ENRICHMENT_SERVICES.md) | Actions, CLI, memory controls and local tests |
 | [Scheduled enrichment](docs/CRON_MIGRATION.md) | Triggers, batch bounds, handoff and queue stability gate |
 | [HTTP API](docs/HTTP_API.md) | Geocoder endpoint behaviour and links to other contracts |
