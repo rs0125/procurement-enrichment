@@ -25,7 +25,7 @@ export const queueRuntime=createQueueRuntime({prisma,queue,services:actions,sett
 const router = Router();
 
 router.get('/health', (req,res,next)=>queueRuntime.status().healthy?next():res.status(503).json({status:'unhealthy'}), healthController(prisma));
-router.get('/queue/status',requireCronAuth,async(req,res)=>res.json({runtime:queueRuntime.status(),...(settings.mode==='cron'?{}:{queue:await queue.stats()})}));
+router.get('/queue/status',requireCronAuth,async(req,res)=>res.json({runtime:queueRuntime.status(),...(settings.mode==='cron'?{}:{queue:await queue.stats(),alerts:await queue.alerts()})}));
 
 router.use("/cron", cronRoutes({ jobs: cronJobs, authorize: requireCronAuth }));
 router.use(sweepRoutes({ jobs: cronJobs, authorize: requireCronAuth }));

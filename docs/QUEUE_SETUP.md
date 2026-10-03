@@ -132,7 +132,67 @@ that flag writes a job but never starts a consumer. Image actions use registry
 IDs; geocode/proximity use warehouse IDs. Normal action POSTs return HTTP 202 with
 `status: QUEUED` in queue mode. Cron acceptance means reconciliation started, not
 that all child work completed. Authenticated `GET /queue/status` reports runtime
-and aggregate queue state; inspect domain stages/attempt logs for individual work.
+and aggregate queue state, including database alert flags; inspect domain
+stages/attempt logs for individual work.
+
+## Dispatch reporting and safe diagnostics
+
+In queue mode, cron results use `reporting: "dispatch"`. A successful bounded
+dispatch is `SUCCESS` even while its jobs remain pending/running. Image stages
+report `dispatchStatus`, `queued`, `selected`, `processingStatus` and the existing
+`backlog` separately. `processingStatus: "OUTSTANDING"` means domain work remains;
+it does not assert that all outstanding work was included in this bounded batch.
+Queueing failures, interruption, failed reconciliation/inventory/projection and
+audit-write failures still produce `PARTIAL`/`FAILED` as appropriate. Inline cron
+mode retains its existing completion-based status semantics.
+
+`CronRunLog.metadata.diagnostic` and bounded per-stage `errors` preserve known
+database/network/Prisma codes, HTTP status, operation, job/run IDs and subject IDs.
+Queue delivery logs add action, message ID and receipt count; `/queue/status`
+also retains the latest safe error plus poll/completion timestamps for this
+process. Raw exception messages/stacks, URLs, credentials, SQL parameters and
+provider response bodies are excluded. Unrecognized exceptions use
+`unknown_error`; historical generic failure rows cannot be reconstructed.
+
+## Database alert flags
+
+Apply the additive, repeatable `sql/queue/005_operational_alerts.sql` as schema
+owner before deploying this operational update. It creates one private heartbeat
+row and the private `enrichment.alert_status` view. No original media, queue jobs,
+attempt counters or existing results are changed. No new external infrastructure,
+notification delivery, credentials, environment switches or scheduled task is
+created. The queue leader updates the heartbeat at most once per minute using
+its existing ten-second leadership check. API-only canaries never write it.
+
+```sql
+SELECT code, observed_value, threshold, unit, missing_observation, checked_at
+FROM enrichment.alert_status
+WHERE active
+ORDER BY code;
+```
+
+| Flag | Active condition |
+|---|---|
+| `worker_heartbeat_stale` | No heartbeat, or older than 3 minutes |
+| `worker_poll_stale` | No worker observation, or last successful poll older than 5 minutes |
+| `worker_unhealthy` | Missing worker observation or worker reported unhealthy |
+| `queue_live_delayed` | Runnable live work has waited over 15 minutes |
+| `queue_backfill_delayed` | Runnable backfill work has waited over 1 hour |
+| `dead_letters` | Any unreviewed dead letters remain |
+| `backup_overdue` | No successful backup, or latest successful backup started over 26 hours ago |
+
+The view computes flags from current database time, so stopped EC2 cannot leave
+a permanently green stored flag. It records current conditions, not incident
+history or notification delivery. Intentional geocode cooldowns and future
+visibility deadlines do not count as runnable queue delay. An empty but polling
+worker remains healthy. During deliberate cron-mode rollback the queue heartbeat
+will become stale; later notification tooling must account for planned downtime.
+Browser roles cannot read the flags or write heartbeats. The existing server-side
+queue role can read the view; consumers must retain private database access.
+
+Notification delivery is explicitly deferred. Query the database view or the
+authenticated `/queue/status` response until that is implemented. Database
+unavailability itself cannot be reported through this view while it is offline.
 
 ## Local verification
 

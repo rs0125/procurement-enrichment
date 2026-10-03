@@ -8,6 +8,7 @@ import { createEnrichmentSweep } from './enrichmentSweep.mjs';
 import { geocodeCandidates } from '../../models/geocode/attemptRepo.mjs';
 import { createGeocodeRecentSweep } from './geocodeRecent.service.mjs';
 import { createWebpSweep } from './webpSweep.mjs';
+import { operation } from '../../lib/runtime/diagnostics.mjs';
 
 export function createCronJobs({ prisma, services, settings={mode:"cron",role:"worker"}, queue }) {
   const repository = new CronImageRepository(prisma), runLog = new CronRunRepository(prisma);
@@ -17,7 +18,7 @@ export function createCronJobs({ prisma, services, settings={mode:"cron",role:"w
       proximity: Boolean(process.env.MAPBOX_ACCESS_TOKEN) }) });
   if(settings.mode==='queue') {
     const work=enrichment.work;
-    enrichment.work=async input=>{const result=await work(input);result.prunedArchive=await queue.pruneArchive();return result;};
+    enrichment.work=async input=>{const result=await work(input);result.prunedArchive=await operation({jobId:input.jobId,jobName:input.jobName,operation:'prune_archive'},()=>queue.pruneArchive());return result;};
   }
   let store;
   const webp = createWebpSweep({ repository, services, getStore: () => store ??= createStorage(),

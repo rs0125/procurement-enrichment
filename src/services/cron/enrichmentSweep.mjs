@@ -1,5 +1,6 @@
 import { sweepImages } from './imageSweeps.mjs';
 import { sweepProximity, proximityCandidates } from './proximitySweep.mjs';
+import { operation,reportDiagnostic } from '../../lib/runtime/diagnostics.mjs';
 
 export function createEnrichmentSweep({ repository, proximity, services, runLog, configured }) {
   const specs = [
@@ -15,10 +16,11 @@ export function createEnrichmentSweep({ repository, proximity, services, runLog,
     return { status: 'DRY_RUN', configured: configured(), stages };
   }
 
-  async function work({ signal }) {
+  async function work({ signal,jobId,jobName:parentJobName='sweep_warehouse_enrichment' }) {
     signal.throwIfAborted();
-    const reconciliation = await repository.bounded('reconcile');
-    await repository.bounded('expireClaims');
+    const context={jobId,jobName:parentJobName};
+    const reconciliation = await operation({...context,operation:'reconcile'},()=>repository.bounded('reconcile'));
+    await operation({...context,operation:'expire_claims'},()=>repository.bounded('expireClaims'));
     const stages = {};
     async function runStage(name, duration, action, jobName) {
       if (signal.aborted) { stages[name] = { status: 'PARTIAL', reason: 'interrupted' }; return; }
@@ -34,28 +36,31 @@ export function createEnrichmentSweep({ repository, proximity, services, runLog,
         stages[name] = await action(stageSignal);
       }
       catch (error) { stages[name] = { status: stageSignal.aborted ? 'PARTIAL' : 'FAILED',
-        reason: stageSignal.aborted ? 'interrupted' : error.statusCode === 503 ? 'configuration_missing' : 'stage_failed' }; }
+        reason: stageSignal.aborted ? 'interrupted' : error.statusCode === 503 ? 'configuration_missing' : 'stage_failed',
+        diagnostic:reportDiagnostic(error,{jobName:jobName??parentJobName,jobId:log?.id??jobId,parentJobId:jobId,action:name,operation:'run_stage'}) }; }
       finally { clearTimeout(timer); }
       if (log) {
         try { await runLog.finish(log.id, stages[name].status, Date.now() - started, stages[name]); }
-        catch { stages[name] = { ...stages[name], status: 'PARTIAL', warning: 'Stage audit completion failed' }; }
+        catch(error) { stages[name] = { ...stages[name], status: 'PARTIAL', warning: 'Stage audit completion failed',
+          diagnostic:reportDiagnostic(error,{jobName,jobId:log.id,parentJobId:jobId,operation:'record_completion'}) }; }
       }
     }
     // The legacy label lock also covers the independently callable subtype action.
     await runStage('images', 230000, async labelSignal => {
       for (const spec of specs.slice(0, 2)) {
-        await runStage(spec.name, spec.duration, stageSignal => sweepImages({ repository, services, ...spec,
+        await runStage(spec.name, spec.duration, stageSignal => sweepImages({ repository, services, ...spec,...context,
           signal: AbortSignal.any([labelSignal, stageSignal]) }));
       }
       return { status: ['labels','documents'].some(name => stages[name].status !== 'SUCCESS') ? 'PARTIAL' : 'SUCCESS' };
     }, 'sweep_warehouse_image_labels');
     const website = specs[2];
     await runStage(website.name, website.duration,
-      stageSignal => sweepImages({ repository, services, ...website, signal: stageSignal }), 'sweep_warehouse_website_images');
-    await runStage('proximity', 160000, stageSignal => sweepProximity({ model: proximity, services, runLog, signal: stageSignal }));
+      stageSignal => sweepImages({ repository, services, ...website,...context, signal: stageSignal }), 'sweep_warehouse_website_images');
+    await runStage('proximity', 160000, stageSignal => sweepProximity({ model: proximity, services, runLog,...context, signal: stageSignal }));
     const values = Object.values(stages);
     return { status: values.every(stage => stage.status === 'FAILED') ? 'FAILED'
-      : values.some(stage => stage.status !== 'SUCCESS') ? 'PARTIAL' : 'SUCCESS', reconciliation, stages };
+      : values.some(stage => stage.status !== 'SUCCESS') ? 'PARTIAL' : 'SUCCESS',
+      ...(services.deliveryMode==='queue'?{reporting:'dispatch'}:{}),reconciliation, stages };
   }
   return { preview, work };
 }

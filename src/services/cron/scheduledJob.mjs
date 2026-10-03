@@ -1,3 +1,5 @@
+import { diagnostic,reportDiagnostic } from '../../lib/runtime/diagnostics.mjs';
+
 export function createScheduledJob({ jobName, runLog, work, preview, budgetMs, shutdownSignal,
   schedule = setImmediate, now = Date.now }) {
   const staleAfterMs = budgetMs + 5 * 60000;
@@ -34,18 +36,20 @@ export function createScheduledJob({ jobName, runLog, work, preview, budgetMs, s
       let result;
       try {
         signal.throwIfAborted();
-        result = await work({ signal });
+        result = await work({ signal,jobName,jobId:String(run.id) });
         if (!['SUCCESS','PARTIAL','FAILED','INTERRUPTED'].includes(result?.status)) throw new Error('Invalid cron result');
       }
-      catch { result = { status: signal.aborted ? 'PARTIAL' : 'FAILED', reason: signal.aborted ? 'interrupted' : 'sweep_failed' }; }
+      catch(error) { result = { status: signal.aborted ? 'PARTIAL' : 'FAILED', reason: signal.aborted ? 'interrupted' : 'sweep_failed',
+        diagnostic:reportDiagnostic(error,{jobName,jobId:run.id,operation:'run'}) }; }
       finally { clearTimeout(timer); }
       try { await runLog.finish(run.id, result.status, now() - started, { executor: 'warehouse-enricher', ...result }); }
-      catch { console.error('Cron audit completion failed', { jobName }); }
+      catch(error) { reportDiagnostic(error,{jobName,jobId:run.id,operation:'record_completion'}); }
       finally { completion = null; activeJobId = null; resolve(); }
     };
     try { schedule(execute); }
     catch (error) {
-      try { await runLog.finish(run.id, 'FAILED', now() - started, { executor: 'warehouse-enricher', reason: 'schedule_failed' }); }
+      try { await runLog.finish(run.id, 'FAILED', now() - started, { executor: 'warehouse-enricher', reason: 'schedule_failed',
+        diagnostic:diagnostic(error,{jobName,jobId:run.id,operation:'schedule'}) }); }
       finally { completion = null; activeJobId = null; resolve(); }
       throw error;
     }

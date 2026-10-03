@@ -56,6 +56,13 @@ Unauthorized requests return 401, invalid request bodies 400, and unavailable
 cron acceptance/status 503. Error responses do not include provider or database
 exception messages.
 
+In queue mode, cron progress has `reporting: "dispatch"`, `dispatchStatus`,
+`queued` and `processingStatus`. Successful enqueueing is `SUCCESS` even while
+processing remains outstanding; `succeeded`/`ready` are never incremented by
+enqueueing alone. Failure metadata includes only safe codes and correlation IDs.
+Authenticated `GET /queue/status` also returns current database alert flags and
+worker polling timestamps. See [queue operations](QUEUE_SETUP.md#database-alert-flags).
+
 Implementation: [cron service](../src/services/cron/geocodeRecent.service.mjs),
 [shared action](../src/services/enrichment/geocode.mjs),
 [publication repository](../src/models/geocode/singleRepository.mjs).

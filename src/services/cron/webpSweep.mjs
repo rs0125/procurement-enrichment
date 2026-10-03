@@ -1,18 +1,20 @@
 import { sweepImages } from './imageSweeps.mjs';
+import { operation,reportDiagnostic } from '../../lib/runtime/diagnostics.mjs';
 
 export function createWebpSweep({ repository, services, getStore, configured, invalidate = async () => {} }) {
   return {
     preview: async () => ({ status: 'DRY_RUN', configured: configured(), limit: 500,
       backlog: await repository.bounded('backlog', 'webp') }),
-    async work({ signal }) {
+    async work({ signal,jobId,jobName='sweep_warehouse_webp' }) {
+      const context={jobId,jobName,action:'webp'};
       if (!configured()) throw new Error('Storage configuration missing');
       signal.throwIfAborted();
-      const reconciliation = await repository.bounded('reconcile');
-      await repository.bounded('expireClaims');
+      const reconciliation = await operation({...context,operation:'reconcile'},()=>repository.bounded('reconcile'));
+      await operation({...context,operation:'expire_claims'},()=>repository.bounded('expireClaims'));
       const started = new Date();
-      const existing = await getStore().existingWebpKeys(signal);
+      const existing = await operation({...context,operation:'inventory'},()=>getStore().existingWebpKeys(signal));
       signal.throwIfAborted();
-      const rows = await repository.bounded('inventory');
+      const rows = await operation({...context,operation:'inventory'},()=>repository.bounded('inventory'));
       const missing = rows.filter(row => !existing.has(row.webpObjectKey) && (!row.webpCheckedAt || new Date(row.webpCheckedAt) <= started));
       let repaired = 0;
       for (let i = 0; i < missing.length; i += 100) {
@@ -20,7 +22,7 @@ export function createWebpSweep({ repository, services, getStore, configured, in
         repaired += await repository.bounded('markMissing', missing.slice(i, i + 100));
       }
       let result, projected = 0, warning;
-      try { result = await sweepImages({ repository, services, stage: 'webp', service: 'webp', limit: 500, signal }); }
+      try { result = await sweepImages({ repository, services, stage: 'webp', service: 'webp', limit: 500, signal,...context }); }
       finally {
         try {
           let after = 0;
@@ -31,7 +33,7 @@ export function createWebpSweep({ repository, services, getStore, configured, in
             after = warehouses.at(-1).id;
           }
           if (signal.aborted) warning = 'Legacy projection interrupted; the next sweep repairs it';
-        } catch { warning = 'Legacy projection deferred to the next sweep'; }
+        } catch(error) { warning = 'Legacy projection deferred to the next sweep'; reportDiagnostic(error,{...context,operation:'projection'}); }
         try { if (result?.ready || projected) await invalidate(); }
         catch { warning = 'Cache refresh deferred to TTL'; }
       }

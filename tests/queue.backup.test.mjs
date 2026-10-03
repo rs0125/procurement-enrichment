@@ -107,6 +107,11 @@ test('streamed backup restores a consistent domain + PGMQ snapshot, including re
     await source.query('DROP TABLE public.before_queue_fixture');
     await restored.query("CREATE EXTENSION pgmq VERSION '1.5.1'; SELECT pgmq.create('existing_fixture')");
     await source.query(await readFile(new URL('../sql/queue/001_bootstrap.sql',import.meta.url),'utf8'));
+    await source.query(`CREATE TABLE public."CronRunLog"("jobName" text,"ranAt" timestamp,status text);
+      INSERT INTO public."CronRunLog" VALUES('backup-db',now() AT TIME ZONE 'UTC','success')`);
+    await source.query(await readFile(new URL('../sql/queue/005_operational_alerts.sql',import.meta.url),'utf8'));
+    await source.query(`INSERT INTO enrichment.worker_heartbeat(singleton,started_at,seen_at,last_poll_at,healthy)
+      VALUES(true,now(),now()-interval '4 minutes',now()-interval '6 minutes',true)`);
     await source.query(`CREATE TABLE public.backup_fixture(id int PRIMARY KEY,value text);
       INSERT INTO public.backup_fixture VALUES(1,'before');
       SELECT enrichment.enqueue('{"v":1,"action":"webp","subjectId":"1","lane":"live"}');
@@ -132,6 +137,9 @@ test('streamed backup restores a consistent domain + PGMQ snapshot, including re
     await restoreSnapshot({connectionString:makeUrl(restoreName),directory,commands:commandsFor(restoreName)});
     assert.equal((await restored.query("SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pg_trgm'")).rows[0].nspname,'pg_catalog');
     assert.deepEqual((await restored.query('SELECT * FROM public.backup_fixture ORDER BY id')).rows,[{id:1,value:'before'}]);
+    const flags=Object.fromEntries((await restored.query('SELECT code,active FROM enrichment.alert_status')).rows.map(row=>[row.code,row.active]));
+    assert.equal(flags.worker_heartbeat_stale,true);assert.equal(flags.worker_poll_stale,true);assert.equal(flags.backup_overdue,false);
+    assert.equal((await restored.query('SELECT count(*)::int AS n FROM enrichment.worker_heartbeat')).rows[0].n,1);
     for(const [table,rows] of Object.entries(expected)) assert.deepEqual((await restored.query('SELECT * FROM pgmq.'+table+' ORDER BY 1')).rows,rows,table);
     assert.equal((await restored.query('SELECT read_ct FROM pgmq.q_enrichment_jobs WHERE msg_id=$1',[owner.msg_id])).rows[0].read_ct,1);
     const sent=(await restored.query(`SELECT enrichment.enqueue('{"v":1,"action":"webp","subjectId":"3","lane":"live"}') AS id`)).rows[0].id;

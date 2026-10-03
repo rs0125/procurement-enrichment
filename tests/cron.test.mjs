@@ -14,6 +14,7 @@ import { createStorage } from '../src/lib/images/storage.mjs';
 import { cronRoutes } from '../src/routes/cron.routes.mjs';
 import { sweepRoutes } from '../src/routes/sweeps.routes.mjs';
 import { ENRICHMENT_ENDPOINT, planCronHandoff } from '../src/lib/runtime/cronHandoff.mjs';
+import { diagnostic } from '../src/lib/runtime/diagnostics.mjs';
 
 function logs() {
   const rows = [];
@@ -127,7 +128,7 @@ test('incomplete R2 inventories cannot reset completed WebPs or start compressio
   const sweep = createWebpSweep({ repository: { bounded: async method => { methods.push(method); return {}; } },
     services: { run: () => assert.fail('compression started') }, configured: () => true,
     getStore: () => ({ existingWebpKeys: async () => { throw new Error('listing interrupted'); } }) });
-  await assert.rejects(sweep.work({ signal: signal() }), /interrupted/);
+  await assert.rejects(sweep.work({ signal: signal() }), error=>diagnostic(error).operation==='inventory');
   assert.deepEqual(methods, ['reconcile', 'expireClaims']);
 });
 

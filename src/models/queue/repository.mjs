@@ -135,4 +135,13 @@ export class QueueRepository {
     return this.transaction(async client => (await client.query('SELECT enrichment.queue_stats() AS stats')).rows[0].stats,
       {readOnly: true});
   }
+
+  async recordHeartbeat(leaderPid,state) {
+    const {rows:[row]}=await this.pool.query('SELECT enrichment.record_worker_heartbeat($1::int,$2::timestamptz,$3::timestamptz,$4::timestamptz,$5::boolean) AS recorded',
+      [leaderPid,state.startedAt,state.lastPollAt,state.lastCompletedAt,state.healthy]);
+    return row.recorded;
+  }
+  async alerts() {
+    return this.transaction(async client=>(await client.query('SELECT * FROM enrichment.alert_status ORDER BY code')).rows,{readOnly:true});
+  }
 }

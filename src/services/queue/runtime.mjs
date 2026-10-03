@@ -1,22 +1,32 @@
 import { createQueueConsumer } from './consumer.mjs';
 import { createQueueDispatcher } from './dispatcher.mjs';
 import { createWarehouseRefresh } from './refresh.mjs';
+import { reportDiagnostic } from '../../lib/runtime/diagnostics.mjs';
 
 export function createQueueRuntime({queue,prisma,services,settings,execute,
-  heartbeatMs=10000,schedule=setInterval,unschedule=clearInterval}) {
+  heartbeatMs=10000,schedule=setInterval,unschedule=clearInterval,
+  report=result=>{if(result.diagnostic || ['terminal','interrupted','unavailable'].includes(result.state) || result.reason==='configuration_unavailable') console.error(JSON.stringify({event:'queue_delivery',...result}));}}) {
   const consumer=createQueueConsumer({queue,settings,execute,
+    report,
     dispatch:createQueueDispatcher({prisma,services,refresh:createWarehouseRefresh({queue})})});
-  let leader,backendPid,loop,startup,heartbeat,timer,stopped=false,failed=false,onFailure=()=>{};
+  let leader,backendPid,loop,startup,heartbeat,timer,stopped=false,failed=false,onFailure=()=>{},lastRecordedAt=0;
   const stop=()=>{stopped=true;if(timer) unschedule(timer);timer=null;consumer.stop();};
   const release=()=>{if(leader) {leader.removeListener('error',fail);leader.release(true);leader=null;}};
-  const fail=()=>{if(failed || stopped)return;failed=true;stop();services.stop();onFailure();};
+  const fail=error=>{if(failed || stopped)return;reportDiagnostic(error,{operation:'queue_leadership'});failed=true;stop();services.stop();onFailure();};
+  async function recordHeartbeat() {
+    if(stopped || Date.now()-lastRecordedAt<60000 || typeof queue.recordHeartbeat!=='function') return;
+    lastRecordedAt=Date.now();
+    try {await queue.recordHeartbeat(backendPid,consumer.status());}
+    catch(error) {reportDiagnostic(error,{operation:'record_heartbeat'});}
+  }
   async function checkLeader() {
     try {
       const {rows:[row]}=await leader.query({text:`SELECT pg_backend_pid() AS pid,EXISTS(
         SELECT FROM pg_locks WHERE locktype='advisory' AND pid=pg_backend_pid()
           AND classid=19870430 AND objid=2 AND objsubid=2 AND granted) AS held`,query_timeout:10000});
       if(!row.held || row.pid!==backendPid) throw new Error('Leadership lost');
-    } catch {fail();}
+      await recordHeartbeat();
+    } catch(error) {fail(error);}
   }
   async function startWorker() {
     try {
@@ -37,6 +47,7 @@ export function createQueueRuntime({queue,prisma,services,settings,execute,
       timer=schedule(()=>{if(!heartbeat) heartbeat=checkLeader().finally(()=>{heartbeat=null;});},heartbeatMs);
       timer.unref?.();
       loop=consumer.start();loop?.catch(fail);
+      await recordHeartbeat();
     } catch(error) {failed=true;stop();release();throw error;}
   }
   return {

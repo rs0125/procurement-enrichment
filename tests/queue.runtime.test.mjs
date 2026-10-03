@@ -86,3 +86,18 @@ test('stop during startup releases the acquired session without starting a consu
   runtime.stop();allowLock();await starting;await runtime.drain();
   assert.equal(claimed,0);assert.equal(released,1);
 });
+
+test('only a queue leader records a bounded heartbeat; diagnostic-write failure does not stop processing',async t=>{
+  t.mock.method(console,'error',()=>{});
+  let writes=0,probe;
+  const leader=new EventEmitter();leader.release=()=>{};leader.query=async()=>({rows:[{pid:17,held:true}]});
+  const queue={pool:{connect:async()=>leader},assertReady:async()=>{},claim:async()=>null,
+    recordHeartbeat:async(pid,state)=>{assert.equal(pid,17);assert.equal(state.enabled,true);writes++;throw Object.assign(new Error('SECRET'),{code:'57014'});}};
+  const services={stop(){}};
+  const api=createQueueRuntime({queue,prisma:{},services,settings:queueSettings({ENRICHMENT_DELIVERY_MODE:'queue',ENRICHMENT_PROCESS_ROLE:'api'})});
+  await api.start();await api.drain();assert.equal(writes,0);
+  const runtime=createQueueRuntime({queue,prisma:{},services,execute:fn=>fn(),settings:queueSettings({ENRICHMENT_DELIVERY_MODE:'queue'}),
+    schedule:fn=>{probe=fn;return {};},unschedule:()=>{}});
+  await runtime.start();assert.equal(writes,1);probe();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(writes,1);assert.equal(runtime.status().healthy,true);await runtime.drain();
+});

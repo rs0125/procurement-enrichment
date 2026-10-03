@@ -47,6 +47,7 @@ test('PGMQ queue integration (disposable local database only)', {skip: !url}, as
     await pool.query(await readFile(new URL('./imageUrls.sql', import.meta.url), 'utf8'));
     await script('001_bootstrap.sql');
     await script('002_capture_functions.sql');
+    await script('005_operational_alerts.sql');
 
     await t.test('bootstrap is additive and repeatable, with capture disabled', async () => {
       await queue.enqueue(request('webp', 1));
@@ -69,6 +70,44 @@ test('PGMQ queue integration (disposable local database only)', {skip: !url}, as
       const regular=createQueueConsumer({queue,execute:fn=>fn(),dispatch:async()=>{called++;return {kind:'done'};},settings:queueSettings({ENRICHMENT_DELIVERY_MODE:'queue'})});
       try {assert.equal((await regular.tick()).state,'completed');assert.equal(called,1);}finally{regular.stop();await regular.drain();}
       await clear();
+    });
+    await t.test('database alert flags exclude cooldowns, detect stopped workers and retain UTC backup age',async()=>{
+      await clear();
+      await script('005_operational_alerts.sql');
+      await queue.enqueue(request('geocode',1),{delay:86400});
+      await pool.query("UPDATE pgmq.q_enrichment_jobs SET enqueued_at=now()-interval '3 days'");
+      await pool.query(`INSERT INTO "CronRunLog"("jobName",status,"durationMs","ranAt") VALUES('backup-db','success',10,(now() AT TIME ZONE 'UTC')-interval '1 hour')`);
+      const read=async()=>Object.fromEntries((await queue.alerts()).map(row=>[row.code,row]));
+      const first=await read();
+      assert.equal(first.queue_live_delayed.active,false);assert.equal(first.queue_backfill_delayed.active,false);
+      assert.equal(first.worker_heartbeat_stale.active,true);assert.equal(first.worker_heartbeat_stale.missing_observation,true);
+      assert.equal(first.backup_overdue.active,false);assert.ok(Math.abs(first.backup_overdue.observed_value-3600)<5);
+      const leader=await pool.connect();
+      try {
+        const {rows:[row]}=await leader.query('SELECT pg_backend_pid() AS pid,pg_advisory_lock(19870430,2)');
+        assert.equal(await queue.recordHeartbeat(row.pid,{startedAt:new Date(),lastPollAt:new Date(),lastCompletedAt:null,healthy:true}),true);
+        assert.equal((await read()).worker_heartbeat_stale.active,false);
+        assert.equal((await read()).worker_poll_stale.active,false);
+        await leader.query('SELECT pg_advisory_unlock(19870430,2)');
+        assert.equal(await queue.recordHeartbeat(row.pid,{startedAt:new Date(),lastPollAt:new Date(),healthy:true}),false);
+      } finally {leader.release(true);}
+      await pool.query("UPDATE enrichment.worker_heartbeat SET seen_at=now()-interval '4 minutes',last_poll_at=now()-interval '6 minutes'");
+      const stopped=await read();assert.equal(stopped.worker_heartbeat_stale.active,true);assert.equal(stopped.worker_poll_stale.active,true);
+      const live=await queue.enqueue(request('webp',2));const backfill=await queue.enqueue(request('webp',3,'backfill'));
+      await pool.query("UPDATE pgmq.q_enrichment_jobs SET vt=now()-interval '16 minutes' WHERE msg_id=$1",[live.messageId]);
+      await pool.query("UPDATE pgmq.q_enrichment_jobs SET vt=now()-interval '61 minutes' WHERE msg_id=$1",[backfill.messageId]);
+      const overdue=await read();assert.equal(overdue.queue_live_delayed.active,true);assert.equal(overdue.queue_backfill_delayed.active,true);
+      assert.equal((await queue.stats()).pending,3);await clear();
+      await pool.query("DELETE FROM \"CronRunLog\" WHERE \"jobName\"='backup-db'");
+      const missing=await read();assert.equal(missing.backup_overdue.active,true);assert.equal(missing.backup_overdue.observed_value,null);
+      for(const role of ['anon','authenticated']) {
+        const client=await pool.connect();
+        try {
+          await client.query('BEGIN');await client.query('SET LOCAL ROLE '+role);
+          await assert.rejects(client.query('SELECT * FROM enrichment.alert_status'),{code:'42501'});
+        }finally {await client.query('ROLLBACK');client.release();}
+      }
+      await pool.query('DELETE FROM enrichment.worker_heartbeat');
     });
     await t.test('real worker leadership excludes competitors and fences a terminated database session',async()=>{
       await clear();let failure;
