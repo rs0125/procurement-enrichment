@@ -115,6 +115,7 @@ during the geocoder/backup window, 21:15–22:45 UTC.
 | [Queue architecture](docs/QUEUE_ARCHITECTURE.md) | PGMQ delivery, dependencies, producer boundary and EC2 resource model |
 | [PGMQ evaluation](docs/PGMQ_EVALUATION.md) | Version checks, local fault tests, acknowledgement and backup requirements |
 | [Queue integration and setup](docs/QUEUE_SETUP.md) | Integrated actions, modes, SQL setup, existing credentials and deployment gates |
+| [Queue operations: tables, audits and alerts](docs/QUEUE_SETUP.md#where-data-lives) | Which table owns what, dispatch versus completion, safe errors and database alert queries |
 | [Queue contract](docs/QUEUE_CONTRACT.md) | Work identity, claims, retries, source fencing and failure recovery |
 | [Queue rollout](docs/QUEUE_ROLLOUT.md) | Implementation phases, canary/backup changes, acceptance tests and rollback |
 | [Queue adversarial review](docs/QUEUE_ADVERSARIAL_REVIEW.md) | Reproduced faults, local fixes, tests and remaining rollout gates |
@@ -126,6 +127,10 @@ during the geocoder/backup window, 21:15–22:45 UTC.
 | [Database backup](deploy/DB_BACKUP.md) | Independent `pg_dump` → S3 timer and restore scope |
 | [Geocoder design history](docs/geocode-cron-spec.md) | Original design; superseded API/deployment details are historical |
 | [CLAUDE.md](CLAUDE.md) | Short orientation for future coding sessions |
+
+Start with [current alert flags](docs/QUEUE_SETUP.md#database-alert-flags) and
+[recent run diagnostics](docs/QUEUE_SETUP.md#reading-recent-runs). Alerts are
+database-only; notification delivery is deferred and adds no external service.
 
 For operational diagnosis, check process health, `CronRunLog`, Supabase
 `cron.job_run_details` and `net._http_response`, then stage backlog and actual

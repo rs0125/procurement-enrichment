@@ -6,6 +6,35 @@ worker is active; scheduled crons now reconcile/enqueue. The restricted trial,
 transactional capture checks and live queue-aware backup passed. See the
 [production evidence and remaining observation](PRODUCTION_2026-10-01.md#queue-activation).
 
+For day-to-day operations:
+
+- [Where data lives](#where-data-lives)
+- [Dispatch status and diagnostics](#dispatch-reporting-and-safe-diagnostics)
+- [Recent run queries](#reading-recent-runs)
+- [Database alert flags and thresholds](#database-alert-flags)
+
+## Where data lives
+
+| Database object | What it owns |
+|---|---|
+| `pgmq.q_enrichment_jobs` | Active delivery: waiting jobs, current claims and delayed retries |
+| `pgmq.a_enrichment_jobs` | Archived deliveries, including deliveries moved to dead letters; retained for 30 days |
+| `pgmq.q_enrichment_dead` | Terminal delivery failures awaiting investigation; retained until reviewed |
+| `public."CronRunLog"` | Main run audit: cron results/diagnostics and guarded geocode, JPEG and proximity attempts |
+| `public.labeled_warehouse_images` | Image results, variant URLs, stage states, attempts and image-stage errors |
+| `public."GeocodeAttempt"` | Warehouse geocoding attempt count, last outcome and success timestamp |
+| `enrichment.worker_heartbeat` | One current worker-health row; updated at most once per minute |
+| `enrichment.alert_status` | A view calculating current alert conditions; it is not a queue or an audit-history table |
+
+Delivery IDs, cron run IDs and image registry IDs belong to different namespaces.
+An archived delivery is not necessarily successful processing: inspect the
+domain result or dead-letter reason when investigating. `CronRunLog` is not one
+row per image job; image-stage history/state remains in the image registry.
+
+The alert objects use the existing private `enrichment` schema. This follows the
+current backend access model, not a special confidentiality requirement for
+alert flags. A future dashboard can read them through its authorized backend.
+
 ## Flow and boundaries
 
 A committed warehouse/media/coordinate change produces an ID-only
@@ -146,6 +175,25 @@ Queueing failures, interruption, failed reconciliation/inventory/projection and
 audit-write failures still produce `PARTIAL`/`FAILED` as appropriate. Inline cron
 mode retains its existing completion-based status semantics.
 
+For example, an image stage can truthfully report:
+
+```json
+{
+  "status": "SUCCESS",
+  "reporting": "dispatch",
+  "dispatchStatus": "SUCCESS",
+  "selected": 12,
+  "queued": 12,
+  "ready": 0,
+  "processingStatus": "OUTSTANDING",
+  "backlog": { "PENDING": 12 }
+}
+```
+
+This means all 12 selected requests reached the durable queue. It does not mean
+12 images have finished processing. A failed enqueue still produces a failed or
+partial dispatch, even if another worker has meanwhile completed some images.
+
 `CronRunLog.metadata.diagnostic` and bounded per-stage `errors` preserve known
 database/network/Prisma codes, HTTP status, operation, job/run IDs and subject IDs.
 Queue delivery logs add action, message ID and receipt count; `/queue/status`
@@ -153,6 +201,27 @@ also retains the latest safe error plus poll/completion timestamps for this
 process. Raw exception messages/stacks, URLs, credentials, SQL parameters and
 provider response bodies are excluded. Unrecognized exceptions use
 `unknown_error`; historical generic failure rows cannot be reconstructed.
+
+### Reading recent runs
+
+```sql
+SELECT id, "jobName", "ranAt", status,
+       metadata->>'reporting' AS reporting,
+       metadata->'diagnostic' AS diagnostic,
+       metadata->'stages' AS stages
+FROM public."CronRunLog"
+WHERE "jobName" IN (
+  'sweep_warehouse_enrichment', 'sweep_warehouse_webp', 'geocode-recent'
+)
+ORDER BY "ranAt" DESC
+LIMIT 20;
+```
+
+For a failure, start with `diagnostic.operation` and `diagnostic.code`, then use
+its job/action/subject identifiers to inspect the matching result or delivery.
+Individual stage diagnostics can also appear under `metadata.stages`.
+Queue delivery JSON logs use `event: "queue_delivery"`; correlate their
+`messageId` with PGMQ and `subjectId` with the appropriate domain table.
 
 ## Database alert flags
 
